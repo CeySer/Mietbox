@@ -4,7 +4,7 @@
 import {
   $, $$, esc, num, eur, nowIso, fmtDT, fmtShort, rentalDays, toast, PHOTO_KINDS, LICENSE_CLASSES,
   rentalStatus, feesTotal, requiredDocs, docsComplete, COND_KINDS, contractHtml, downloadContract, compressImage, SignaturePad, initStore, isDemo, FEE_TYPES,
-} from './common.js?v=2';
+} from './common.js?v=3';
 
 const app = $('#app');
 const id = new URLSearchParams(location.search).get('id');

@@ -5,8 +5,8 @@ import {
   $, $$, esc, num, eur, nowIso, toLocalInput, dayKey, fmtDate, fmtDT, fmtShort, rentalDays, toast,
   ITEM_TYPES, LOCK_TYPES, DEFAULT_CHECKLIST, PHOTO_KINDS, ID_KINDS, FEE_TYPES, LICENSE_CLASSES,
   DEFAULT_SETTINGS, DEFAULT_TERMS, rentalStatus, requiredDocs, docsComplete, COND_KINDS, feesTotal, suggestLateFee, contractHtml,
-  downloadContract, compressImage, SignaturePad, initStore, isDemo, APP_NAME,
-} from './common.js?v=2';
+  downloadContract, shareContract, kautionPayout, compressImage, SignaturePad, initStore, isDemo, APP_NAME,
+} from './common.js?v=3';
 
 let store, user = null;
 let items = [], rentals = [], settings = { ...DEFAULT_SETTINGS };
@@ -27,7 +27,7 @@ async function boot() {
 async function start() {
   if (started) return; started = true;
   try { settings = { ...DEFAULT_SETTINGS, ...(await store.getSettings() || {}) }; } catch (e) { console.error(e); }
-  if (settings.terms && !settings.terms.includes('{FAHRER}') && settings.terms.startsWith('## 1. Mietgegenstand')) settings.terms = ''; // alte Vorlage → neue
+  if (settings.terms && settings.terms.startsWith('## 1. Mietgegenstand') && !settings.terms.includes('{NUTZUNG}')) settings.terms = ''; // alte Vorlage → neue
   if (num(settings.loeschTage) === 30) settings.loeschTage = 90;
   let first = 0;
   store.watchCol('items', d => { items = d.sort((a, b) => (a.name || '').localeCompare(b.name || '')); refresh(); });
@@ -181,7 +181,7 @@ function viewRentals(sub) {
     let extra = '';
     if (arch) {
       const d = daysLeft(r.closedAt, idDays());
-      extra = r.idDeleted ? '<span class="tiny muted">Ausweisfotos gelöscht</span>' : `<span class="tiny muted">Ausweisfotos noch ${Math.max(0, d)} Tage</span>`;
+      extra = (r.idDeleted ? '<span class="tiny muted">Ausweisfotos gelöscht</span>' : `<span class="tiny muted">Ausweisfotos noch ${Math.max(0, d)} Tage</span>`) + (!r.storniert && !r.finalSentAt ? ' <span class="badge amber">Abrechnung nicht verschickt</span>' : '');
     }
     return `<a class="list-item" href="#/miete/${r.id}" data-s="${esc(((r.mieter?.name || '') + ' ' + (r.mieter?.telefon || '') + ' ' + (r.fahrer2?.name || '') + ' ' + (r.item?.name || '') + ' ' + (r.item?.kennzeichen || '')).toLowerCase())}" data-von="${esc(r.von)}" data-bis="${esc(r.bis)}"><div class="ic">${itemIcon(r.item?.typ)}</div><div class="grow"><div class="t">${esc(r.mieter?.name || 'Ohne Namen')}</div><div class="small muted">${esc(r.item?.name || '')} · ${fmtShort(r.von)} – ${fmtShort(r.bis)}</div><div class="small">${r.storniert ? '' : eur(num(r.preis) + feesTotal(r)) + ' '}${!arch ? (r.mietePaid ? '<span class="badge green">bezahlt</span>' : '<span class="badge amber">offen</span>') : extra}</div></div><span class="badge ${s.cls}">${s.label}</span></a>`;
   };
@@ -475,6 +475,8 @@ function viewRental(id) {
   const late = returned || picked ? suggestLateFee(r) : { fee: 0 };
   const hasLateFee = (r.gebuehren || []).some(f => f.typ === 'verspaetung');
   const vorname = m.name ? ' ' + m.name.split(' ')[0] : '';
+  const needQuittung = st.kautionIn && st.auszahlung > 0 && (r.kautionBackVia || 'bar') === 'bar';
+  const quittungOk = !!(r.kautionQuittung?.sig && num(r.kautionQuittung.betrag) === Math.round(st.auszahlung * 100) / 100);
   const kautionLabel = ({ offen: 'offen', erhalten: 'erhalten', zurueck: 'zurückgezahlt', einbehalten: 'verrechnet', keine: 'keine' })[r.kautionStatus || 'offen'];
 
   // Archiv-Hinweis mit Lösch-Countdown
@@ -485,6 +487,7 @@ function viewRental(id) {
       <div class="small">🪪 Ausweis/Führerschein: ${r.idDeleted ? '<b>gelöscht</b>' : `werden in <b>${Math.max(0, dId)} Tagen</b> automatisch gelöscht`}</div>
       <div class="small">📸 Zustandsfotos: ${r.condDeleted ? '<b>gelöscht</b>' : `werden in <b>${Math.max(0, dFoto)} Tagen</b> automatisch gelöscht`}</div>
       <div class="small">📄 Vertrag & Mieterdaten: bleiben gespeichert (Nachweis, wer gefahren ist)</div>
+      ${r.storniert ? '' : `<div class="btns"><button class="btn wa grow" data-act="share" data-final="1">📲 Endabrechnung per WhatsApp senden</button></div>${r.finalSentAt ? `<p class="tiny muted">Zuletzt verschickt am ${fmtShort(r.finalSentAt)}</p>` : ''}`}
       <div class="btns"><button class="btn ghost sm" data-act="reopen">Aus Archiv zurückholen</button></div></div>`;
   }
 
@@ -498,7 +501,8 @@ function viewRental(id) {
       ${m.telefon ? `<dt>Telefon</dt><dd><a href="tel:${esc(m.telefon)}">${esc(m.telefon)}</a></dd>` : ''}
       ${f2.name ? `<dt>Weiterer Fahrer</dt><dd>${esc(f2.name)}</dd>` : ''}
     </dl>
-    ${r.signature ? `<div class="btns"><button class="btn ghost sm" data-act="pdf">📄 PDF-Vertrag</button></div>` : ''}
+    ${r.signature ? `<div class="row wrap-ok" style="margin-top:10px">${r.contractSentAt || r.signedBy === 'link' ? `<span class="badge green">📄 Vertrag ${r.contractSentAt ? 'verschickt ' + fmtShort(r.contractSentAt) : 'liegt beim Mieter (Link)'}</span>` : '<span class="badge amber">📄 Vertrag noch nicht verschickt</span>'}${r.closed ? (r.finalSentAt ? `<span class="badge green">Endabrechnung verschickt</span>` : '<span class="badge amber">Endabrechnung nicht verschickt</span>') : ''}</div>
+    <div class="btns"><button class="btn ghost sm" data-act="pdf">📄 PDF ansehen</button></div>` : ''}
   </div>
 
   ${archiveBox}
@@ -513,6 +517,8 @@ function viewRental(id) {
 
   <details class="card" ${docsOk && !r.signature && !ro ? 'open' : ''}><summary>✍️ Vertrag ${r.signature ? '<span class="badge green">unterschrieben</span>' : '<span class="badge amber">offen</span>'}</summary>
     ${r.signature ? `<p class="small">Unterschrieben ${r.signedBy === 'link' ? 'per Link' : 'vor Ort'} am <b>${fmtDT(r.signedAt)}</b></p><img class="sig-img" src="${r.signature}" alt="Unterschrift Mieter">
+      ${ro ? '' : `<div class="btns"><button class="btn wa grow" data-act="share">📲 Vertrag (PDF) per WhatsApp senden</button></div>
+      <p class="tiny muted">${r.contractSentAt ? 'Verschickt am ' + fmtShort(r.contractSentAt) + '.' : 'Öffnet das Teilen-Menü deines Handys – dort WhatsApp und den Kunden wählen.'}${r.signedBy === 'link' ? ' Der Mieter kann den Vertrag auch selbst über seinen Link herunterladen.' : ''}</p>`}
       <details style="margin-top:10px"><summary class="small">Vertrag ansehen</summary>${contractHtml(r)}</details>`
       : ro ? '<p class="small muted">Nicht unterschrieben.</p>'
       : !docsOk ? `<div class="alert amber">🪪 <span>Erst <b>Ausweis${need.includes('fuehrerschein') ? ' und Führerschein' : ''}</b> fotografieren und das Einverständnis anhaken – dann kannst du den Vertrag senden oder vor Ort unterschreiben lassen.</span></div>`
@@ -578,9 +584,11 @@ function viewRental(id) {
       <dt style="font-weight:800;color:var(--text)">${st.auszahlung >= 0 ? 'Du zahlst zurück' : 'Mieter zahlt noch'}</dt><dd style="font-size:1.15rem">${eur(Math.abs(st.auszahlung))}</dd>
     </dl>
     ${st.auszahlung > 0 ? `<div class="seg" style="margin-top:10px" data-seg="backVia">${[['bar', 'Rückzahlung bar'], ['paypal', 'per PayPal']].map(([k, l]) => `<button class="${(r.kautionBackVia || 'bar') === k ? 'on' : ''}" data-v="${k}">${l}</button>`).join('')}</div>` : ''}
+    ${needQuittung ? (quittungOk ? `<div class="alert teal" style="margin-top:10px">✍️ <span>Mieter hat den Erhalt von <b>${eur(r.kautionQuittung.betrag)}</b> quittiert (${fmtShort(r.kautionQuittung.at)}).</span></div>`
+      : `<hr><h3>Quittung Kaution</h3><p class="small">Mieter bestätigt: <b>„Ich habe ${eur(st.auszahlung)} Kaution in bar zurückerhalten.“</b></p>${sigPadHtml('qSig', 'Mieter unterschreibt hier')}`) : ''}
     ${!returned && picked ? `<p class="small muted">Noch nicht als zurückgegeben markiert – beim Abschließen wird die Rückgabe auf jetzt gesetzt.</p>` : ''}
     <p class="small muted">Danach landet die Miete im <b>Archiv</b>. Ausweisfotos werden nach ${idDays()} Tagen, Zustandsfotos nach ${fotoDays()} Tagen automatisch gelöscht. Vertrag & Mieterdaten bleiben.</p>
-    ${r.signature ? `<div class="btns"><button class="btn block" data-act="close">✓ Vermietung abschließen</button></div>` : ''}
+    ${r.signature ? `<div class="btns"><button class="btn block" data-act="close" ${needQuittung && !quittungOk ? 'disabled' : ''}>✓ Vermietung abschließen</button></div>${needQuittung && !quittungOk ? '<p class="tiny muted">Erst Quittung unterschreiben lassen.</p>' : ''}` : ''}
     ${!picked ? `<div class="btns"><button class="btn danger block" data-act="storno">Miete stornieren (findet nicht statt)</button></div>` : ''}
   </div>` : ''}`;
 
@@ -670,6 +678,13 @@ function bindRentalActions(r) {
     return true;
   });
 
+  // Quittung Kaution
+  if ($('#qSig')) bindSigPad('qSig', async (sig) => {
+    const st = settlement(r);
+    await upd(r, { kautionQuittung: { sig, at: nowIso(), betrag: Math.round(st.auszahlung * 100) / 100 } }, 'Quittung gespeichert ✓');
+    dirty = false;
+  });
+
   // Fotos: Kamera oder Galerie
   $$('[data-upload]').forEach(inp => inp.onchange = async () => {
     const kind = inp.dataset.upload;
@@ -708,6 +723,19 @@ function bindRentalActions(r) {
     switch (a.dataset.act) {
       case 'linkSent': upd(r, { linkSentAt: r.linkSentAt || nowIso() }); break;
       case 'copyLink': try { await navigator.clipboard.writeText(linkFor(r)); toast('Link kopiert', 'ok'); } catch { prompt('Link kopieren:', linkFor(r)); } upd(r, { linkSentAt: r.linkSentAt || nowIso() }); break;
+      case 'share': {
+        const fin = !!a.dataset.final;
+        toast('PDF wird erstellt …');
+        try {
+          const text = fin ? `Hallo${r.mieter?.name ? ' ' + r.mieter.name.split(' ')[0] : ''}, anbei die Endabrechnung zu deiner Miete (${r.item?.name}). Danke!` : `Hallo${r.mieter?.name ? ' ' + r.mieter.name.split(' ')[0] : ''}, anbei dein Mietvertrag (${r.item?.name}, ${fmtShort(r.von)} – ${fmtShort(r.bis)}).`;
+          const res = await shareContract(r, photoCache[r.id] || await store.listPhotos(r.id), text);
+          if (res) {
+            await upd(r, fin ? { finalSentAt: nowIso() } : { contractSentAt: nowIso() });
+            toast(res === 'download' ? 'PDF gespeichert – in WhatsApp als Datei anhängen' : 'Verschickt ✓', 'ok');
+          }
+        } catch (err) { toast(err.message, 'err'); }
+        break;
+      }
       case 'pdf': toast('PDF wird erstellt …'); try { await downloadContract(r, photoCache[r.id] || await store.listPhotos(r.id)); } catch (err) { toast(err.message, 'err'); } break;
       case 'consent': upd(r, { consent: a.checked, consentAt: a.checked ? nowIso() : null }); break;
       case 'saveCode': upd(r, { lockCode: $('#lockCode').value.trim() }, 'Code gespeichert'); break;
@@ -733,7 +761,7 @@ function bindRentalActions(r) {
         if (st.kautionIn) { patch.kautionStatus = st.auszahlung > 0 ? 'zurueck' : 'einbehalten'; patch.kautionBackVia = r.kautionBackVia || 'bar'; }
         if (!r.mietePaid) patch.mietePaid = st.kautionIn ? 'kaution' : (r.zahlungsart || 'bar');
         await upd(r, patch, 'Abgeschlossen – liegt jetzt im Archiv ✓');
-        location.hash = '#/mieten/archiv'; break;
+        window.scrollTo(0, 0); break;
       }
       case 'storno':
         if (!confirm('Miete stornieren? Sie wird ins Archiv verschoben und zählt nicht zu den Einnahmen.')) return;

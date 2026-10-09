@@ -67,7 +67,7 @@ export const FEE_TYPES = { reinigung: 'Reinigung', verspaetung: 'Verspätung', s
 export const LICENSE_CLASSES = ['B', 'B96', 'BE', 'C1E / CE', 'Klasse 3 (alt)', 'Nicht nötig'];
 
 export const DEFAULT_TERMS = `## 1. Mietgegenstand
-Der Vermieter überlässt dem Mieter den oben genannten Mietgegenstand samt Zubehör in verkehrssicherem und sauberem Zustand. Zustand und Zubehör werden bei der Übergabe per Checkliste und Fotos festgehalten. Der Mieter prüft den Mietgegenstand vor Fahrtantritt (z. B. Beleuchtung, Reifen, Kupplung) und meldet Mängel sofort.
+Der Vermieter überlässt dem Mieter den oben genannten Mietgegenstand samt Zubehör in verkehrssicherem und sauberem Zustand. Zustand und Zubehör werden bei der Übergabe per Checkliste und Fotos festgehalten. Der Mieter prüft den Mietgegenstand {PRUEFUNG} und meldet Mängel sofort.
 
 ## 2. Mietzeit und Rückgabe
 Der Mietgegenstand ist zum vereinbarten Zeitpunkt am vereinbarten Ort zurückzugeben. Nach einer Kulanzzeit von {KULANZ} Minuten werden für jede angefangene Stunde Verspätung {VERSPAETUNG} berechnet, höchstens jedoch der Tagesmietpreis je angefangenem Tag. Eine Verlängerung ist nur nach vorheriger Absprache möglich.
@@ -75,14 +75,11 @@ Der Mietgegenstand ist zum vereinbarten Zeitpunkt am vereinbarten Ort zurückzug
 ## 3. Miete, Zahlung und Kaution
 Die Miete ist spätestens bei der Übergabe fällig. Die Kaution sichert alle Ansprüche des Vermieters aus diesem Vertrag. Sie wird nach ordnungsgemäßer Rückgabe zurückgezahlt. Berechtigte Forderungen (z. B. Reinigung, Verspätung, Schäden, fehlendes Zubehör) dürfen mit der Kaution verrechnet werden.
 
-## 4. Fahrer, Fahrerlaubnis und Nutzung
-Den Mietgegenstand darf ausschließlich der Mieter{FAHRER} nutzen bzw. mit einem Zugfahrzeug bewegen. Jeder Fahrer muss eine gültige Fahrerlaubnis für das Gespann aus Zugfahrzeug und Anhänger besitzen. Zulässiges Gesamtgewicht, Nutzlast, Stützlast und die Anhängelast des Zugfahrzeugs sind zu beachten, die Ladung ist vorschriftsmäßig zu sichern. Die Weitervermietung oder Überlassung an andere Personen, Fahrten ins Ausland ohne Zustimmung sowie der Transport gefährlicher Güter sind nicht erlaubt.
-
-## 5. Reinigung
+{NUTZUNG}## 5. Reinigung
 Der Mietgegenstand ist besenrein zurückzugeben. Bei starker Verschmutzung wird eine Reinigungspauschale von {REINIGUNG} berechnet.
 
-## 6. Schäden, Unfall, Bußgelder
-Schäden, Unfälle und Diebstahl sind dem Vermieter sofort zu melden; bei Unfall oder Diebstahl ist zusätzlich die Polizei zu verständigen. Der Mieter haftet für Schäden und Verlust während der Mietzeit, soweit er sie zu vertreten hat. Bußgelder, Maut und Gebühren während der Mietzeit trägt der Mieter. Fragt eine Behörde wegen eines Verstoßes oder Unfalls während der Mietzeit an, darf der Vermieter Name und Anschrift des Mieters mitteilen.
+## 6. Schäden, Unfall, Diebstahl
+Schäden, Unfälle und Diebstahl sind dem Vermieter sofort zu melden; bei Unfall oder Diebstahl ist zusätzlich die Polizei zu verständigen. Der Mieter haftet für Schäden und Verlust während der Mietzeit, soweit er sie zu vertreten hat. {BUSSGELD}
 
 {GPS}## 8. Datenschutz und Aufbewahrung
 Die Daten des Mieters werden zur Abwicklung dieses Vertrags gespeichert. Fotos von Ausweis und Führerschein werden nur mit ausdrücklicher Einwilligung erstellt, als Kopie gekennzeichnet und {LOESCHTAGE} Tage nach Abschluss der Miete automatisch gelöscht; nicht benötigte Angaben dürfen vor dem Foto abgedeckt werden. Zustandsfotos werden nach {FOTOTAGE} Tagen gelöscht. Vertrag und Abrechnung werden im Rahmen der gesetzlichen Aufbewahrungspflichten aufbewahrt.
@@ -92,6 +89,43 @@ Die bei Abholung und Rückgabe mit Datum und Uhrzeit aufgenommenen Fotos dienen 
 
 ## 10. Sonstiges
 Änderungen und Absprachen sind in Textform (z. B. WhatsApp oder E-Mail) ausreichend. Sollte eine Bestimmung unwirksam sein, bleibt der Vertrag im Übrigen wirksam.`;
+
+// Abschnitt 4 und weitere Bausteine passend zur Artikel-Art
+const TYPE_TERMS = {
+  anhaenger: {
+    pruefung: 'vor Fahrtantritt (z. B. Beleuchtung, Reifen, Kupplung)',
+    nutzung: `## 4. Fahrer, Fahrerlaubnis und Nutzung
+Den Mietgegenstand darf ausschließlich der Mieter{FAHRER} mit einem Zugfahrzeug bewegen. Jeder Fahrer muss eine gültige Fahrerlaubnis für das Gespann aus Zugfahrzeug und Anhänger besitzen. Zulässiges Gesamtgewicht, Nutzlast, Stützlast und die Anhängelast des Zugfahrzeugs sind zu beachten, die Ladung ist vorschriftsmäßig zu sichern. Die Weitervermietung oder Überlassung an andere Personen, Fahrten ins Ausland ohne Zustimmung sowie der Transport gefährlicher Güter sind nicht erlaubt.
+
+`,
+    bussgeld: true,
+  },
+  roller: {
+    pruefung: 'vor Fahrtantritt (z. B. Bremsen, Licht, Akku)',
+    nutzung: `## 4. Fahrer und Nutzung
+Den Mietgegenstand darf ausschließlich der Mieter{FAHRER} fahren. Jeder Fahrer muss die für dieses Fahrzeug nötige Fahrerlaubnis bzw. Prüfbescheinigung besitzen und die Verkehrsregeln beachten (z. B. keine Mitfahrer, kein Fahren unter Alkohol- oder Drogeneinfluss). Das Tragen eines Helms wird empfohlen. Der Akku darf nur mit dem mitgelieferten Ladegerät geladen werden. Beim Abstellen ist das Fahrzeug immer abzuschließen. Die Weitergabe an andere Personen ist nicht erlaubt.
+
+`,
+    bussgeld: true,
+  },
+  werkzeug: {
+    pruefung: 'vor der Nutzung (z. B. Funktion, Kabel, Zubehör)',
+    nutzung: `## 4. Nutzung und Sicherheit
+Den Mietgegenstand darf ausschließlich der Mieter{FAHRER} nutzen. Er darf nur bestimmungsgemäß und gemäß Bedienungsanleitung verwendet werden, und nur von Personen, die mit der Bedienung vertraut sind. Die nötige Schutzausrüstung (z. B. Schutzbrille, Gehörschutz, Handschuhe) ist zu tragen. Normaler Verschleiß ist im Mietpreis enthalten; Schäden durch unsachgemäße Nutzung oder Überlastung trägt der Mieter. Verbrauchte Verschleißteile (z. B. Sägeblätter, Bohrer, Schleifmittel) werden nach Absprache berechnet. Die Weitergabe an andere Personen ist nicht erlaubt.
+
+`,
+    bussgeld: false,
+  },
+  sonstiges: {
+    pruefung: 'vor der Nutzung',
+    nutzung: `## 4. Nutzung
+Den Mietgegenstand darf ausschließlich der Mieter{FAHRER} nutzen. Er ist pfleglich und nur bestimmungsgemäß zu verwenden. Die Weitergabe an andere Personen ist nicht erlaubt.
+
+`,
+    bussgeld: false,
+  },
+};
+const BUSSGELD_TERM = 'Bußgelder, Maut und Gebühren während der Mietzeit trägt der Mieter. Fragt eine Behörde wegen eines Verstoßes oder Unfalls während der Mietzeit an, darf der Vermieter Name und Anschrift des Mieters mitteilen.';
 
 const GPS_TERM = `## 7. GPS-Ortung
 Der Mietgegenstand ist zum Schutz vor Diebstahl mit einer GPS-Ortung ausgestattet. Der Mieter wurde darüber informiert. Der Standort wird nur bei Verdacht auf Diebstahl oder Unterschlagung sowie bei Überschreitung der Mietzeit ausgewertet.
@@ -136,19 +170,23 @@ export function suggestLateFee(r) {
 // ---------- Vertrag ----------
 export function contractSections(r) {
   const c = r.cfg || {};
+  const tt = TYPE_TERMS[r.item?.typ] || TYPE_TERMS.sonstiges;
   let t = (r.terms || DEFAULT_TERMS)
+    .replaceAll('{NUTZUNG}', tt.nutzung)
+    .replaceAll('{PRUEFUNG}', tt.pruefung)
+    .replaceAll('{BUSSGELD}', tt.bussgeld ? BUSSGELD_TERM : '')
     .replaceAll('{KULANZ}', String(num(c.kulanzMinuten)))
     .replaceAll('{VERSPAETUNG}', eur(c.verspaetungStunde))
     .replaceAll('{REINIGUNG}', eur(c.reinigung))
     .replaceAll('{LOESCHTAGE}', String(num(c.loeschTage) || 90))
     .replaceAll('{FOTOTAGE}', String(num(c.fotoTage) || 365))
-    .replaceAll('{FAHRER}', r.fahrer2?.name ? ` sowie der weitere Fahrer ${r.fahrer2.name}${r.fahrer2.fuehrerschein ? ' (Führerscheinklasse ' + r.fahrer2.fuehrerschein + ')' : ''}` : '')
+    .replaceAll('{FAHRER}', r.fahrer2?.name ? ` sowie der weitere ${r.item?.typ === 'werkzeug' || r.item?.typ === 'sonstiges' ? 'Nutzer' : 'Fahrer'} ${r.fahrer2.name}${r.fahrer2.fuehrerschein ? ' (Führerscheinklasse ' + r.fahrer2.fuehrerschein + ')' : ''}` : '')
     .replaceAll('{GPS}', r.item?.gps ? GPS_TERM : '');
   const sections = [];
   for (const block of t.split(/^## /m)) {
     if (!block.trim()) continue;
     const [h, ...rest] = block.split('\n');
-    sections.push({ h: h.trim(), t: rest.join('\n').trim() });
+    sections.push({ h: `${sections.length + 1}. ${h.trim().replace(/^\d+\.\s*/, '')}`, t: rest.join('\n').trim() }); // fortlaufend nummerieren
   }
   return sections;
 }
@@ -263,10 +301,19 @@ export async function makeContractPdf(r, photos = []) {
     text('Summe Gebühren: ' + eur(feesTotal(r)), 9.5, 'bold', 2);
   }
   const pay = [];
-  pay.push('Miete: ' + (r.mietePaid ? 'bezahlt (' + (r.mietePaid === 'paypal' ? 'PayPal' : 'bar') + ')' : 'offen'));
+  pay.push('Miete: ' + (r.mietePaid ? 'bezahlt (' + ({ paypal: 'PayPal', kaution: 'mit Kaution verrechnet' }[r.mietePaid] || 'bar') + ')' : 'offen'));
   pay.push('Kaution: ' + ({ offen: 'offen', erhalten: 'erhalten', zurueck: 'zurückgezahlt', einbehalten: 'verrechnet', keine: 'keine' }[r.kautionStatus || 'offen']));
-  if (r.kautionStatus === 'zurueck' || r.kautionStatus === 'einbehalten') pay.push('Auszahlung: ' + eur(Math.max(0, num(r.kaution) - feesTotal(r))));
+  if (r.kautionStatus === 'zurueck' || r.kautionStatus === 'einbehalten') pay.push('Auszahlung an Mieter: ' + eur(kautionPayout(r)) + (r.kautionBackVia === 'paypal' ? ' (PayPal)' : ' (bar)'));
+  text('Abrechnung', 10.5, 'bold', 1);
   text(pay.join('   ·   '), 9.5, 'normal', 3);
+  if (r.kautionQuittung?.sig) {
+    need(40);
+    const abz = [feesTotal(r) ? eur(feesTotal(r)) + ' Gebühren' : '', r.mietePaid === 'kaution' ? eur(r.preis) + ' Miete' : ''].filter(Boolean).join(' und ');
+    text(`Quittung: Ich habe die Kaution von ${eur(r.kaution)}${abz ? ' abzüglich ' + abz : ''} = ${eur(r.kautionQuittung.betrag)} in bar zurückerhalten.`, 9.5, 'normal', 1);
+    try { doc.addImage(r.kautionQuittung.sig, 'PNG', M, y, 60, 22); } catch (e) { }
+    doc.setDrawColor(120); doc.line(M, y + 24, M + 70, y + 24);
+    doc.setFontSize(8); doc.text('Mieter – ' + fmtShort(r.kautionQuittung.at), M, y + 28); y += 34;
+  }
 
   // Zustandsfotos (keine Ausweisfotos)
   const pics = photos.filter(p => p.kind === 'abholung' || p.kind === 'rueckgabe');
@@ -285,10 +332,28 @@ export async function makeContractPdf(r, photos = []) {
   return doc;
 }
 
+export function kautionPayout(r) {
+  const kIn = ['erhalten', 'zurueck', 'einbehalten'].includes(r.kautionStatus);
+  if (!kIn) return 0;
+  return Math.max(0, num(r.kaution) - feesTotal(r) - (r.mietePaid === 'kaution' ? num(r.preis) : 0));
+}
+export const contractFileName = (r) => `Mietvertrag_${(r.mieter?.name || 'Mieter').replace(/[^\wäöüÄÖÜß-]+/g, '_')}_${dayKey(r.von)}${r.closed ? '_final' : ''}.pdf`;
+
+// PDF direkt über das Teilen-Menü des Handys schicken (z. B. WhatsApp). Gibt true zurück, wenn geteilt wurde.
+export async function shareContract(r, photos, text) {
+  const doc = await makeContractPdf(r, photos);
+  const file = new File([doc.output('blob')], contractFileName(r), { type: 'application/pdf' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Mietvertrag', text }); return true; }
+    catch (e) { if (e.name === 'AbortError') return false; }
+  }
+  doc.save(file.name); // Fallback: herunterladen, dann selbst in WhatsApp anhängen
+  return 'download';
+}
+
 export async function downloadContract(r, photos) {
   const doc = await makeContractPdf(r, photos);
-  const name = `Mietvertrag_${(r.mieter?.name || 'Mieter').replace(/[^\wäöüÄÖÜß-]+/g, '_')}_${dayKey(r.von)}.pdf`;
-  doc.save(name);
+  doc.save(contractFileName(r));
 }
 
 // ---------- Bilder verkleinern (+ Wasserzeichen für Ausweise) ----------
