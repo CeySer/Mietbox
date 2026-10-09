@@ -1,0 +1,49 @@
+rules_version = '2';
+// ============================================================
+//  MIETBOX – Firestore-Sicherheitsregeln
+//  WICHTIG: Unten DEINE E-Mail eintragen (die, mit der du dich in der App anmeldest).
+// ============================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email == "DEINE-EMAIL@BEISPIEL.DE";
+    }
+
+    // Einstellungen & Artikel: nur du
+    match /settings/{doc} { allow read, write: if isOwner(); }
+    match /items/{id}     { allow read, write: if isOwner(); }
+
+    match /rentals/{rentalId} {
+      // Du darfst alles. Liste aller Mieten nur für dich.
+      allow list, create, delete: if isOwner();
+
+      // Mieter: Wer den (zufälligen, nicht erratbaren) Link hat, darf genau diese eine Miete lesen.
+      allow get: if true;
+
+      // Mieter darf nur seine eigenen Felder ändern – und nichts mehr nach Abschluss.
+      allow update: if isOwner() || (
+        resource.data.closed != true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'mieter', 'consent', 'consentAt', 'docs', 'signature', 'signedAt', 'signedBy',
+             'openRequestAt', 'renterPickupAt', 'renterReturnAt', 'renterPhotos', 'updatedAt'])
+        // nach der Unterschrift keine Änderung an Daten/Unterschrift mehr
+        && (resource.data.get('signature', null) == null
+            || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['mieter', 'signature', 'signedAt', 'signedBy', 'consent', 'consentAt']))
+      );
+
+      match /photos/{photoId} {
+        // Fotos (auch Ausweis) sieht nur der Vermieter
+        allow read, delete: if isOwner();
+        allow create: if isOwner() || (
+          get(/databases/$(database)/documents/rentals/$(rentalId)).data.get('closed', false) != true
+          && request.resource.data.by == 'mieter'
+          && request.resource.data.kind in ['ausweis_vorne', 'ausweis_hinten', 'fuehrerschein', 'abholung', 'rueckgabe']
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 1000000
+        );
+      }
+    }
+  }
+}
