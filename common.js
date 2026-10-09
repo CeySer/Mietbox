@@ -35,8 +35,8 @@ export function toast(msg, type = '') {
 // ---------- Konstanten ----------
 export const ITEM_TYPES = { anhaenger: 'Anhänger', werkzeug: 'Werkzeug', roller: 'E-Roller / E-Scooter', sonstiges: 'Sonstiges' };
 export const LOCK_TYPES = {
-  code: 'Code-Schloss (Zeit-Code, z. B. igloohome)',
-  fern: 'Ich öffne aus der Ferne (App/Bluetooth)',
+  fern: 'Ich öffne das Schloss (aus der Ferne / vor Ort)',
+  code: 'Code-Schloss (Mieter bekommt einen Zeit-Code)',
   persoenlich: 'Persönliche Übergabe',
 };
 export const DEFAULT_CHECKLIST = {
@@ -49,10 +49,20 @@ export const PHOTO_KINDS = {
   ausweis_vorne: 'Ausweis Vorderseite',
   ausweis_hinten: 'Ausweis Rückseite',
   fuehrerschein: 'Führerschein',
+  fuehrerschein2: 'Führerschein weiterer Fahrer',
   abholung: 'Zustand bei Abholung',
   rueckgabe: 'Zustand bei Rückgabe',
 };
-export const ID_KINDS = ['ausweis_vorne', 'ausweis_hinten', 'fuehrerschein'];
+export const ID_KINDS = ['ausweis_vorne', 'ausweis_hinten', 'fuehrerschein', 'fuehrerschein2'];
+export const COND_KINDS = ['abholung', 'rueckgabe'];
+// Welche Ausweisfotos für diese Miete nötig sind
+export function requiredDocs(r) {
+  const k = ['ausweis_vorne', 'ausweis_hinten'];
+  if (r.item?.typ === 'anhaenger' || r.item?.typ === 'roller') k.push('fuehrerschein');
+  if (r.fahrer2?.name) k.push('fuehrerschein2');
+  return k;
+}
+export const docsComplete = (r) => !!r.consent && requiredDocs(r).every(k => r.docs?.[k]);
 export const FEE_TYPES = { reinigung: 'Reinigung', verspaetung: 'Verspätung', schaden: 'Schaden', tank: 'Fehlendes Zubehör', sonstiges: 'Sonstiges' };
 export const LICENSE_CLASSES = ['B', 'B96', 'BE', 'C1E / CE', 'Klasse 3 (alt)', 'Nicht nötig'];
 
@@ -63,19 +73,19 @@ Der Vermieter überlässt dem Mieter den oben genannten Mietgegenstand samt Zube
 Der Mietgegenstand ist zum vereinbarten Zeitpunkt am vereinbarten Ort zurückzugeben. Nach einer Kulanzzeit von {KULANZ} Minuten werden für jede angefangene Stunde Verspätung {VERSPAETUNG} berechnet, höchstens jedoch der Tagesmietpreis je angefangenem Tag. Eine Verlängerung ist nur nach vorheriger Absprache möglich.
 
 ## 3. Miete, Zahlung und Kaution
-Die Miete ist spätestens bei der Übergabe fällig und kann bar oder per PayPal bezahlt werden. Die Kaution sichert alle Ansprüche des Vermieters aus diesem Vertrag. Sie wird nach ordnungsgemäßer Rückgabe zurückgezahlt. Berechtigte Forderungen (z. B. Reinigung, Verspätung, Schäden, fehlendes Zubehör) dürfen mit der Kaution verrechnet werden.
+Die Miete ist spätestens bei der Übergabe fällig. Die Kaution sichert alle Ansprüche des Vermieters aus diesem Vertrag. Sie wird nach ordnungsgemäßer Rückgabe zurückgezahlt. Berechtigte Forderungen (z. B. Reinigung, Verspätung, Schäden, fehlendes Zubehör) dürfen mit der Kaution verrechnet werden.
 
-## 4. Fahrerlaubnis und Nutzung
-Der Mieter versichert, eine gültige Fahrerlaubnis für das Gespann aus Zugfahrzeug und Anhänger zu besitzen. Er beachtet zulässiges Gesamtgewicht, Nutzlast, Stützlast und die Anhängelast seines Zugfahrzeugs und sichert die Ladung vorschriftsmäßig. Die Weitervermietung oder Überlassung an Dritte, Fahrten ins Ausland ohne Zustimmung sowie der Transport gefährlicher Güter sind nicht erlaubt.
+## 4. Fahrer, Fahrerlaubnis und Nutzung
+Den Mietgegenstand darf ausschließlich der Mieter{FAHRER} nutzen bzw. mit einem Zugfahrzeug bewegen. Jeder Fahrer muss eine gültige Fahrerlaubnis für das Gespann aus Zugfahrzeug und Anhänger besitzen. Zulässiges Gesamtgewicht, Nutzlast, Stützlast und die Anhängelast des Zugfahrzeugs sind zu beachten, die Ladung ist vorschriftsmäßig zu sichern. Die Weitervermietung oder Überlassung an andere Personen, Fahrten ins Ausland ohne Zustimmung sowie der Transport gefährlicher Güter sind nicht erlaubt.
 
 ## 5. Reinigung
 Der Mietgegenstand ist besenrein zurückzugeben. Bei starker Verschmutzung wird eine Reinigungspauschale von {REINIGUNG} berechnet.
 
-## 6. Schäden, Unfall, Diebstahl
-Schäden, Unfälle und Diebstahl sind dem Vermieter sofort zu melden; bei Unfall oder Diebstahl ist zusätzlich die Polizei zu verständigen. Der Mieter haftet für Schäden und Verlust während der Mietzeit, soweit er sie zu vertreten hat. Bußgelder, Maut und Gebühren während der Mietzeit trägt der Mieter.
+## 6. Schäden, Unfall, Bußgelder
+Schäden, Unfälle und Diebstahl sind dem Vermieter sofort zu melden; bei Unfall oder Diebstahl ist zusätzlich die Polizei zu verständigen. Der Mieter haftet für Schäden und Verlust während der Mietzeit, soweit er sie zu vertreten hat. Bußgelder, Maut und Gebühren während der Mietzeit trägt der Mieter. Fragt eine Behörde wegen eines Verstoßes oder Unfalls während der Mietzeit an, darf der Vermieter Name und Anschrift des Mieters mitteilen.
 
-{GPS}## 8. Datenschutz und Ausweiskopie
-Die Daten des Mieters werden nur zur Abwicklung dieses Vertrags gespeichert. Fotos von Ausweis und Führerschein werden nur mit ausdrücklicher Einwilligung des Mieters erstellt, als Kopie gekennzeichnet und spätestens {LOESCHTAGE} Tage nach Abschluss der Miete gelöscht. Nicht benötigte Angaben darf der Mieter vor dem Foto abdecken.
+{GPS}## 8. Datenschutz und Aufbewahrung
+Die Daten des Mieters werden zur Abwicklung dieses Vertrags gespeichert. Fotos von Ausweis und Führerschein werden nur mit ausdrücklicher Einwilligung erstellt, als Kopie gekennzeichnet und {LOESCHTAGE} Tage nach Abschluss der Miete automatisch gelöscht; nicht benötigte Angaben dürfen vor dem Foto abgedeckt werden. Zustandsfotos werden nach {FOTOTAGE} Tagen gelöscht. Vertrag und Abrechnung werden im Rahmen der gesetzlichen Aufbewahrungspflichten aufbewahrt.
 
 ## 9. Fotos als Nachweis
 Die bei Abholung und Rückgabe mit Datum und Uhrzeit aufgenommenen Fotos dienen beiden Seiten als Nachweis über den Zustand des Mietgegenstands.
@@ -90,12 +100,13 @@ Der Mietgegenstand ist zum Schutz vor Diebstahl mit einer GPS-Ortung ausgestatte
 
 export const DEFAULT_SETTINGS = {
   name: '', adresse: '', telefon: '', email: '', paypalMe: '',
-  reinigung: 30, verspaetungStunde: 5, kulanzMinuten: 30, loeschTage: 30,
-  terms: DEFAULT_TERMS, ownerSignature: null,
+  reinigung: 30, verspaetungStunde: 5, kulanzMinuten: 30, loeschTage: 90, fotoTage: 365,
+  terms: '', ownerSignature: null,
 };
 
 // ---------- Status einer Miete ----------
 export function rentalStatus(r, now = new Date()) {
+  if (r.storniert) return { key: 'storniert', label: 'Storniert', cls: 'grey' };
   if (r.closed) return { key: 'abgeschlossen', label: 'Abgeschlossen', cls: 'grey' };
   const picked = r.pickedUpAt || r.renterPickupAt;
   const returned = r.returnedAt || r.renterReturnAt;
@@ -129,7 +140,9 @@ export function contractSections(r) {
     .replaceAll('{KULANZ}', String(num(c.kulanzMinuten)))
     .replaceAll('{VERSPAETUNG}', eur(c.verspaetungStunde))
     .replaceAll('{REINIGUNG}', eur(c.reinigung))
-    .replaceAll('{LOESCHTAGE}', String(num(c.loeschTage)))
+    .replaceAll('{LOESCHTAGE}', String(num(c.loeschTage) || 90))
+    .replaceAll('{FOTOTAGE}', String(num(c.fotoTage) || 365))
+    .replaceAll('{FAHRER}', r.fahrer2?.name ? ` sowie der weitere Fahrer ${r.fahrer2.name}${r.fahrer2.fuehrerschein ? ' (Führerscheinklasse ' + r.fahrer2.fuehrerschein + ')' : ''}` : '')
     .replaceAll('{GPS}', r.item?.gps ? GPS_TERM : '');
   const sections = [];
   for (const block of t.split(/^## /m)) {
@@ -144,7 +157,8 @@ export function contractHead(r) {
   const v = r.vermieter || {}, m = r.mieter || {}, it = r.item || {};
   return {
     vermieter: [v.name, v.adresse, v.telefon, v.email].filter(Boolean),
-    mieter: [m.name, m.adresse, m.geburtsdatum ? 'geb. ' + new Date(m.geburtsdatum).toLocaleDateString('de-DE') : '', m.telefon, m.email, m.fuehrerschein ? 'Führerscheinklasse: ' + m.fuehrerschein : ''].filter(Boolean),
+    mieter: [m.name, m.adresse, m.geburtsdatum ? 'geb. ' + new Date(m.geburtsdatum).toLocaleDateString('de-DE') : '', m.telefon, m.email, m.fuehrerschein ? 'Führerscheinklasse: ' + m.fuehrerschein : '',
+      r.fahrer2?.name ? `Weiterer Fahrer: ${r.fahrer2.name}${r.fahrer2.geburtsdatum ? ', geb. ' + new Date(r.fahrer2.geburtsdatum).toLocaleDateString('de-DE') : ''}${r.fahrer2.fuehrerschein ? ', Kl. ' + r.fahrer2.fuehrerschein : ''}` : ''].filter(Boolean),
     gegenstand: [it.name, it.kennzeichen ? 'Kennzeichen: ' + it.kennzeichen : '', it.zgg ? 'zul. Gesamtgewicht: ' + it.zgg + ' kg' : ''].filter(Boolean),
     zeitraum: `${fmtDT(r.von)}  bis  ${fmtDT(r.bis)}`,
     preise: `Miete: ${eur(r.preis)}   ·   Kaution: ${eur(r.kaution)}`,
@@ -198,7 +212,8 @@ export async function makeContractPdf(r, photos = []) {
   doc.setFillColor(15, 118, 110); doc.rect(0, 0, W, 6, 'F');
   y = 16;
   text('Mietvertrag' + (v.name ? ' – ' + v.name : ''), 17, 'bold', 1);
-  text('Vertrags-Nr. ' + r.id.slice(0, 8).toUpperCase() + '   ·   erstellt mit ' + APP_NAME, 8, 'normal', 4);
+  text('Vertrags-Nr. ' + r.id.slice(0, 8).toUpperCase() + '   ·   erstellt mit ' + APP_NAME, 8, 'normal', r.storniert ? 1 : 4);
+  if (r.storniert) text('STORNIERT am ' + fmtShort(r.closedAt), 11, 'bold', 4);
 
   // Parteien zweispaltig
   doc.setFontSize(10);
@@ -277,7 +292,7 @@ export async function downloadContract(r, photos) {
 }
 
 // ---------- Bilder verkleinern (+ Wasserzeichen für Ausweise) ----------
-export function compressImage(file, { max = 1400, quality = 0.62, watermark = '' } = {}) {
+export function compressImage(file, { max = 1280, quality = 0.6, watermark = '' } = {}) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -295,7 +310,7 @@ export function compressImage(file, { max = 1400, quality = 0.62, watermark = ''
         ctx.restore();
       }
       let q = quality, out = cv.toDataURL('image/jpeg', q);
-      while (out.length > 850000 && q > 0.25) { q -= 0.1; out = cv.toDataURL('image/jpeg', q); }
+      while (out.length > 700000 && q > 0.25) { q -= 0.1; out = cv.toDataURL('image/jpeg', q); }
       resolve(out);
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Bild konnte nicht gelesen werden')); };
@@ -381,7 +396,7 @@ function demoStore() {
     },
     del: async (col, id) => { const d = load(); delete d[col]?.[id]; if (col === 'rentals') delete d.photos[id]; save(d); },
     addPhoto: async (rentalId, p) => { const d = load(); d.photos[rentalId] ||= {}; d.photos[rentalId][rid()] = p; save(d); },
-    listPhotos: async (rentalId) => Object.entries(load().photos[rentalId] || {}).map(([id, p]) => ({ id, ...p })),
+    listPhotos: async (rentalId, kinds) => Object.entries(load().photos[rentalId] || {}).map(([id, p]) => ({ id, ...p })).filter(p => !kinds || kinds.includes(p.kind)),
     delPhoto: async (rentalId, pid) => { const d = load(); delete d.photos[rentalId]?.[pid]; save(d); },
   };
 }
@@ -416,7 +431,11 @@ async function fbStore() {
       return F.deleteDoc(F.doc(db, col, id));
     },
     addPhoto: (rentalId, p) => F.addDoc(F.collection(db, 'rentals', rentalId, 'photos'), p),
-    listPhotos: async (rentalId) => (await F.getDocs(F.collection(db, 'rentals', rentalId, 'photos'))).docs.map(d => ({ id: d.id, ...d.data() })),
+    listPhotos: async (rentalId, kinds) => {
+      const col = F.collection(db, 'rentals', rentalId, 'photos');
+      const snap = await F.getDocs(kinds ? F.query(col, F.where('kind', 'in', kinds)) : col);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    },
     delPhoto: (rentalId, pid) => F.deleteDoc(F.doc(db, 'rentals', rentalId, 'photos', pid)),
   };
 }

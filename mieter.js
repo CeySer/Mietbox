@@ -3,8 +3,8 @@
 // ============================================================
 import {
   $, $$, esc, num, eur, nowIso, fmtDT, fmtShort, rentalDays, toast, PHOTO_KINDS, LICENSE_CLASSES,
-  rentalStatus, feesTotal, contractHtml, downloadContract, compressImage, SignaturePad, initStore, isDemo, FEE_TYPES,
-} from './common.js';
+  rentalStatus, feesTotal, requiredDocs, docsComplete, COND_KINDS, contractHtml, downloadContract, compressImage, SignaturePad, initStore, isDemo, FEE_TYPES,
+} from './common.js?v=2';
 
 const app = $('#app');
 const id = new URLSearchParams(location.search).get('id');
@@ -31,10 +31,11 @@ async function save(patch, msg) {
 }
 
 const V = () => r.vermieter || {};
-const needsLicense = () => r.item?.typ === 'anhaenger';
-const docKinds = () => needsLicense() ? ['ausweis_vorne', 'ausweis_hinten', 'fuehrerschein'] : ['ausweis_vorne', 'ausweis_hinten'];
+const needsLicense = () => requiredDocs(r).includes('fuehrerschein');
+const docKinds = () => requiredDocs(r);
+const localPrev = {}; // gerade hochgeladene Ausweisfotos (nur Vorschau in dieser Sitzung)
 const dataOk = () => { const m = r.mieter || {}; return m.name && m.adresse && m.telefon && m.geburtsdatum && (!needsLicense() || m.fuehrerschein); };
-const docsOk = () => r.consent && docKinds().every(k => r.docs?.[k]);
+const docsOk = () => docsComplete(r);
 
 function head() {
   return `<header class="top"><div class="logo">M</div><div class="title"><h1>Deine Miete</h1><div class="small muted">${esc(r.item?.name || '')} bei ${esc(V().name || 'deinem Vermieter')}</div></div></header>
@@ -73,7 +74,9 @@ function renderWizard() {
     <div class="card"><h2>2. Ausweis${needsLicense() ? ' & Führerschein' : ''}</h2>
       <p class="small">Zur Absicherung brauchen wir ein Foto. Die Fotos bekommen den Aufdruck „KOPIE“, werden nur für diesen Mietvertrag genutzt und spätestens <b>${num(r.cfg?.loeschTage) || 30} Tage</b> nach Mietende gelöscht. Angaben, die nicht gebraucht werden (z. B. Zugangsnummer), darfst du abdecken.</p>
       <label class="check"><input type="checkbox" id="consent" ${r.consent ? 'checked' : ''}> Ich bin einverstanden, dass Fotos meines Ausweises${needsLicense() ? ' und Führerscheins' : ''} für diesen Mietvertrag gespeichert werden.</label>
-      <div class="photos">${docKinds().map(k => `<label class="upload ${r.docs?.[k] ? 'done' : ''}"><span class="big">${r.docs?.[k] ? '✅' : '📷'}</span>${PHOTO_KINDS[k]}<input type="file" accept="image/*" capture="environment" data-up="${k}"></label>`).join('')}</div>
+      <div class="photos">${docKinds().map(k => localPrev[k]
+        ? `<label class="photo" style="cursor:pointer"><img src="${localPrev[k]}" alt=""><div class="cap">✅ ${PHOTO_KINDS[k]}<br>tippen zum Ersetzen</div><input type="file" accept="image/*" data-up="${k}" hidden></label>`
+        : `<label class="upload ${r.docs?.[k] ? 'done' : ''}"><span class="big">${r.docs?.[k] ? '✅' : '📷'}</span>${PHOTO_KINDS[k]}<span class="tiny">${r.docs?.[k] ? 'vorhanden' : 'Kamera oder Galerie'}</span><input type="file" accept="image/*" data-up="${k}"></label>`).join('')}</div>
       <div class="btns"><button class="btn ghost" id="back">Zurück</button><button class="btn grow" id="next" ${docsOk() ? '' : 'disabled'}>Weiter</button></div>
     </div>`;
   if (step === 3) body = `
@@ -93,7 +96,7 @@ function renderWizard() {
       const mieter = { ...(r.mieter || {}) }; for (const k of ['name', 'adresse', 'telefon', 'email', 'geburtsdatum', 'fuehrerschein']) mieter[k] = f[k].value.trim();
       const age = (Date.now() - new Date(mieter.geburtsdatum)) / (365.25 * 864e5);
       if (age < 18) return toast('Mieten ist erst ab 18 Jahren möglich', 'err');
-      if (await save({ mieter })) { step = 2; window.scrollTo(0, 0); render(); }
+      if (await save({ mieter })) { step = docsOk() ? 3 : 2; window.scrollTo(0, 0); render(); }
     };
   }
   if (step === 2) {
@@ -107,7 +110,9 @@ function renderWizard() {
       try {
         const data = await compressImage(file, { max: 1600, quality: 0.7, watermark: `nur für Mietvertrag ${V().name || ''} · ${new Date().toLocaleDateString('de-DE')}` });
         await store.addPhoto(id, { kind, data, by: 'mieter', createdAt: nowIso() });
+        localPrev[kind] = data;
         await save({ ['docs.' + kind]: nowIso() }, 'Foto gespeichert ✓');
+        render();
       } catch (e) { toast('Upload fehlgeschlagen – bitte nochmal', 'err'); }
       busy = false;
     });
@@ -116,7 +121,7 @@ function renderWizard() {
     const pad = new SignaturePad($('#sig'));
     $('#sig').addEventListener('pointerdown', () => { dirty = true; $('.sig-wrap .hint')?.remove(); });
     $('#clr').onclick = () => pad.clear();
-    $('#back').onclick = () => { step = 2; render(); };
+    $("#back").onclick = () => { step = docsOk() ? 1 : 2; render(); };
     $('#signBtn').onclick = async () => {
       if (!$('#accept').checked) return toast('Bitte bestätige, dass du den Vertrag gelesen hast', 'err');
       if (pad.isEmpty()) return toast('Bitte unterschreiben', 'err');
@@ -154,7 +159,7 @@ function renderMain() {
     <div class="card"><h2>${title} ${doneAt ? `<span class="badge green">${fmtShort(doneAt)}</span>` : ''}</h2>
       ${doneAt ? `<p class="small muted">Danke, ist gespeichert. ${pc[kind] || 0} Foto(s).</p>` : `
       <p class="small">${hint}</p>
-      <div class="photos"><label class="upload ${pc[kind] >= 2 ? 'done' : ''}"><span class="big">📷</span>Fotos aufnehmen<span class="tiny">${pc[kind] || 0} gespeichert</span><input type="file" accept="image/*" multiple data-ph="${kind}"></label></div>
+      <div class="photos" id="rp-${kind}"><label class="upload ${pc[kind] >= 2 ? 'done' : ''}"><span class="big">📷</span>Foto hinzufügen<span class="tiny">${pc[kind] || 0} gespeichert</span><input type="file" accept="image/*" multiple data-ph="${kind}"></label></div>
       <div class="btns"><button class="btn block" id="${btnId}" ${(pc[kind] || 0) >= 2 ? '' : 'disabled'}>${btnText}</button></div>
       ${(pc[kind] || 0) < 2 ? '<p class="tiny muted">Mindestens 2 Fotos nötig.</p>' : ''}`}
     </div>`;
@@ -165,7 +170,7 @@ function renderMain() {
     <div class="card"><h2>💶 Bezahlen</h2>
       <dl class="kv"><dt>Miete</dt><dd>${eur(r.preis)} ${r.mietePaid ? '<span class="badge green">bezahlt</span>' : '<span class="badge amber">offen</span>'}</dd>
       <dt>Kaution</dt><dd>${eur(r.kaution)} ${kautionIn ? '<span class="badge green">ok</span>' : '<span class="badge amber">offen</span>'}</dd></dl>
-      ${toPay > 0 ? `${v.paypalMe ? `<div class="btns"><a class="btn pp block" target="_blank" rel="noopener" href="https://paypal.me/${encodeURIComponent(v.paypalMe)}/${toPay.toFixed(2)}EUR">Mit PayPal zahlen (${eur(toPay)})</a></div>` : ''}<p class="small muted">${v.paypalMe ? 'Oder bar bei der Abholung.' : 'Bar bei der Abholung.'} Die Kaution bekommst du nach ordnungsgemäßer Rückgabe zurück.</p>` : '<p class="small muted">Alles bezahlt – danke!</p>'}
+      ${toPay > 0 ? `${v.paypalMe && r.zahlungsart === 'paypal' ? `<div class="btns"><a class="btn pp block" target="_blank" rel="noopener" href="https://paypal.me/${encodeURIComponent(v.paypalMe)}/${toPay.toFixed(2)}EUR">Mit PayPal zahlen (${eur(toPay)})</a></div>` : ''}<p class="small muted">${v.paypalMe && r.zahlungsart === 'paypal' ? 'Oder bar bei der Abholung.' : 'Bezahlung in bar bei der Abholung.'} Die Kaution bekommst du nach ordnungsgemäßer Rückgabe zurück.</p>` : '<p class="small muted">Alles bezahlt – danke!</p>'}
     </div>
 
     ${!picked ? `<div class="card"><h2>🔑 Abholung</h2>${lock}</div>` : ''}
@@ -183,6 +188,7 @@ function renderMain() {
     <div class="card"><h2>📄 Dein Vertrag</h2><button class="btn sec block" id="pdf">Mietvertrag als PDF herunterladen</button>
       ${v.telefon ? `<div class="btns"><a class="btn ghost grow" href="tel:${esc(v.telefon)}">📞 ${esc(v.name || 'Vermieter')} anrufen</a></div>` : ''}</div>`;
 
+  loadCondPhotos();
   $('#openReq') && ($('#openReq').onclick = () => save({ openRequestAt: nowIso() }, 'Anfrage gesendet'));
   $('#pdf').onclick = async () => { toast('PDF wird erstellt …'); try { await downloadContract(r, []); } catch (e) { toast(e.message, 'err'); } };
   $('#pickBtn') && ($('#pickBtn').onclick = () => save({ renterPickupAt: nowIso() }, 'Gute Fahrt! 🚗'));
@@ -196,7 +202,7 @@ function renderMain() {
       catch (e) { toast('Ein Foto ging nicht – bitte nochmal', 'err'); }
     }
     await save({ ['renterPhotos.' + kind]: n }, 'Fotos gespeichert ✓');
-    busy = false;
+    busy = false; render();
   });
 }
 
@@ -204,9 +210,27 @@ function renderClosed() {
   const fees = r.gebuehren || [];
   const back = ['erhalten', 'zurueck', 'einbehalten'].includes(r.kautionStatus) ? num(r.kaution) - feesTotal(r) - (r.mietePaid === 'kaution' ? num(r.preis) : 0) : 0;
   app.innerHTML = head() + `
-    <div class="card"><h2>✅ Miete abgeschlossen</h2><p>Danke fürs Mieten bei ${esc(V().name || 'uns')}!</p>
+    ${r.storniert ? `<div class="card"><h2>Miete storniert</h2><p class="muted">Diese Miete findet nicht statt. Bei Fragen melde dich bei ${esc(V().name || 'deinem Vermieter')}.</p></div>` : ''}
+    <div class="card" ${r.storniert ? 'hidden' : ''}><h2>✅ Miete abgeschlossen</h2><p>Danke fürs Mieten bei ${esc(V().name || 'uns')}!</p>
     ${fees.length ? `<h3>Gebühren</h3>${fees.map(f => `<div class="fee-row"><div class="grow">${FEE_TYPES[f.typ] || f.typ}${f.notiz ? ` <span class="small muted">– ${esc(f.notiz)}</span>` : ''}</div><b>${eur(f.betrag)}</b></div>`).join('')}` : ''}
     ${r.kautionStatus === 'zurueck' ? `<p>Kaution zurück: <b>${eur(Math.max(0, back))}</b></p>` : ''}
     <button class="btn sec block" id="pdf">Mietvertrag als PDF</button></div>`;
   $('#pdf').onclick = async () => { try { await downloadContract(r, []); } catch (e) { toast(e.message, 'err'); } };
+}
+
+let condToken = 0;
+async function loadCondPhotos() {
+  const my = ++condToken;
+  try {
+    const ps = await store.listPhotos(id, COND_KINDS);
+    if (my !== condToken) return;
+    ps.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    for (const p of ps) {
+      const host = $('#rp-' + p.kind); if (!host) continue;
+      const el = document.createElement('div'); el.className = 'photo';
+      el.innerHTML = `<img src="${p.data}" alt=""><div class="cap">${fmtShort(p.createdAt)}</div>`;
+      el.querySelector('img').onclick = () => { const v = document.createElement('div'); v.className = 'viewer'; v.innerHTML = `<img src="${p.data}" alt="">`; v.onclick = () => v.remove(); document.body.appendChild(v); };
+      host.insertBefore(el, host.querySelector('.upload'));
+    }
+  } catch (e) { console.warn('Fotos konnten nicht geladen werden', e); }
 }

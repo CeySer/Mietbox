@@ -23,7 +23,7 @@ Die Werte aus Schritt 1.4 in `config.js` eintragen (apiKey, authDomain, projectI
 1. In `firestore.rules` die Zeile `DEINE-EMAIL@BEISPIEL.DE` durch **deine E-Mail** ersetzen.
 2. Firebase → **Firestore Database → Regeln** → alles löschen, Inhalt von `firestore.rules` einfügen → **Veröffentlichen**.
 
-Damit gilt: Nur du siehst alle Mieten und Fotos. Ein Mieter sieht nur seine eigene Miete (über den zufälligen Link) und darf nur seine Daten, Fotos und Unterschrift ergänzen – Ausweisfotos kann er danach nicht mehr abrufen.
+Damit gilt: Nur du siehst alle Mieten und Fotos. Ein Mieter sieht nur seine eigene Miete (über den zufälligen Link) und darf nur seine Daten, Fotos und Unterschrift ergänzen. Ausweisfotos kann er danach nicht mehr abrufen, seine Zustandsfotos schon.
 
 ## 4. Online stellen mit GitHub Pages
 1. Auf GitHub neues Repository `Mietbox` anlegen (öffentlich ist ok – es stehen keine Kundendaten im Code).
@@ -41,13 +41,19 @@ Damit gilt: Nur du siehst alle Mieten und Fotos. Ein Mieter sieht nur seine eige
 ---
 
 ## So läuft eine Miete
-1. **+ Neue Miete** → Artikel, Zeitraum (Preis wird berechnet), Kaution.
-2. **Vor Ort:** Ausweis fotografieren → Mieter unterschreibt auf deinem Handy.
-   **Aus der Ferne:** „WhatsApp-Link“ → Mieter trägt Daten ein, fotografiert Ausweis/Führerschein, unterschreibt.
-3. Du bekommst den Hinweis „hat unterschrieben“ → Schloss-Code eintragen und **freigeben** (oder bei Fernöffnung: Mieter tippt „Ich bin da“, du öffnest).
-4. Mieter macht Abholfotos und tippt „Abgeholt“. Zahlung: bar oder PayPal-Link.
-5. Rückgabe: Mieter macht Fotos → du prüfst, trägst Gebühren ein (Reinigung, Verspätung wird vorgeschlagen, Schaden) → **Kaution zurückgezahlt & abschließen**.
-6. Ausweisfotos werden nach der eingestellten Frist automatisch gelöscht.
+1. **+ Neue Miete** → Artikel, Zeitraum (Preis wird berechnet), Kaution, Mieter (optional weiterer Fahrer).
+2. **Ausweis & Führerschein** fotografieren oder aus der Galerie wählen (z. B. per WhatsApp bekommen) – Einverständnis anhaken.
+3. **Vertrag**: erst dann aktiv. Per WhatsApp-Link senden *oder* vor Ort auf deinem Handy unterschreiben lassen.
+4. **Abholung**: Mieter tippt auf seiner Seite „Ich bin da“ → du öffnest das Schloss und hakst „Schloss ist offen“ an. Mieter macht Zustandsfotos.
+5. **Zahlung**: bar (Standard) oder PayPal markieren, Kaution als erhalten markieren.
+6. **Rückgabe**: Mieter macht Fotos → du prüfst, trägst Gebühren ein (Reinigung, Verspätung wird vorgeschlagen, Schaden).
+7. **Vermietung abschließen** → die Miete landet im **Archiv**.
+
+## Archiv & automatisches Löschen
+- Ab dem Abschluss läuft die Frist: Ausweis-/Führerscheinfotos werden nach **90 Tagen**, Zustandsfotos nach **365 Tagen** automatisch gelöscht (änderbar in den Einstellungen).
+- Vertrag, Mieterdaten, Unterschrift und Abrechnung bleiben im Archiv.
+- Im Archiv: **„Wer hatte den Anhänger am …?“** – Datum (und Uhrzeit) eingeben, z. B. bei Blitzerfoto oder Unfallmeldung.
+- Findet eine Miete nicht statt: **Stornieren** (zählt nicht zu den Einnahmen).
 
 ## Hinweise
 - Der Vertragstext ist eine **Vorlage, keine Rechtsberatung** – lass ihn bei Gelegenheit prüfen.

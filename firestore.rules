@@ -34,12 +34,13 @@ service cloud.firestore {
       );
 
       match /photos/{photoId} {
-        // Fotos (auch Ausweis) sieht nur der Vermieter
-        allow read, delete: if isOwner();
+        // Ausweisfotos sieht nur der Vermieter. Zustandsfotos darf auch der Mieter sehen.
+        allow read: if isOwner() || resource.data.kind in ['abholung', 'rueckgabe'];
+        allow delete: if isOwner();
         allow create: if isOwner() || (
           get(/databases/$(database)/documents/rentals/$(rentalId)).data.get('closed', false) != true
           && request.resource.data.by == 'mieter'
-          && request.resource.data.kind in ['ausweis_vorne', 'ausweis_hinten', 'fuehrerschein', 'abholung', 'rueckgabe']
+          && request.resource.data.kind in ['ausweis_vorne', 'ausweis_hinten', 'fuehrerschein', 'fuehrerschein2', 'abholung', 'rueckgabe']
           && request.resource.data.data is string
           && request.resource.data.data.size() < 1000000
         );
