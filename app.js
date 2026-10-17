@@ -6,7 +6,7 @@ import {
   ITEM_TYPES, LOCK_TYPES, DEFAULT_CHECKLIST, PHOTO_KINDS, ID_KINDS, FEE_TYPES, LICENSE_CLASSES,
   DEFAULT_SETTINGS, DEFAULT_TERMS, rentalStatus, requiredDocs, docsComplete, COND_KINDS, feesTotal, suggestLateFee, contractHtml,
   downloadContract, shareContract, kautionPayout, compressImage, SignaturePad, initStore, isDemo, APP_NAME,
-} from './common.js?v=3';
+} from './common.js?v=4';
 
 let store, user = null;
 let items = [], rentals = [], settings = { ...DEFAULT_SETTINGS };
@@ -487,7 +487,7 @@ function viewRental(id) {
       <div class="small">🪪 Ausweis/Führerschein: ${r.idDeleted ? '<b>gelöscht</b>' : `werden in <b>${Math.max(0, dId)} Tagen</b> automatisch gelöscht`}</div>
       <div class="small">📸 Zustandsfotos: ${r.condDeleted ? '<b>gelöscht</b>' : `werden in <b>${Math.max(0, dFoto)} Tagen</b> automatisch gelöscht`}</div>
       <div class="small">📄 Vertrag & Mieterdaten: bleiben gespeichert (Nachweis, wer gefahren ist)</div>
-      ${r.storniert ? '' : `<div class="btns"><button class="btn wa grow" data-act="share" data-final="1">📲 Endabrechnung per WhatsApp senden</button></div>${r.finalSentAt ? `<p class="tiny muted">Zuletzt verschickt am ${fmtShort(r.finalSentAt)}</p>` : ''}`}
+      ${r.storniert ? '' : `<div class="btns">${m.telefon ? `<a class="btn wa grow" target="_blank" data-act="waFinal" href="${waUrl(m.telefon, `Hallo${vorname}, danke fürs Mieten! Hier ist deine Endabrechnung (Gebühren, Kaution) – über den Link kannst du sie als PDF herunterladen:\n${link}`)}">📲 Endabrechnung an ${esc(m.name ? m.name.split(' ')[0] : 'Kunden')} senden</a>` : ''}<button class="btn sec sm" data-act="share" data-final="1">PDF als Datei teilen</button></div>${r.finalSentAt ? `<p class="tiny muted">Zuletzt verschickt am ${fmtShort(r.finalSentAt)}</p>` : ''}`}
       <div class="btns"><button class="btn ghost sm" data-act="reopen">Aus Archiv zurückholen</button></div></div>`;
   }
 
@@ -517,8 +517,8 @@ function viewRental(id) {
 
   <details class="card" ${docsOk && !r.signature && !ro ? 'open' : ''}><summary>✍️ Vertrag ${r.signature ? '<span class="badge green">unterschrieben</span>' : '<span class="badge amber">offen</span>'}</summary>
     ${r.signature ? `<p class="small">Unterschrieben ${r.signedBy === 'link' ? 'per Link' : 'vor Ort'} am <b>${fmtDT(r.signedAt)}</b></p><img class="sig-img" src="${r.signature}" alt="Unterschrift Mieter">
-      ${ro ? '' : `<div class="btns"><button class="btn wa grow" data-act="share">📲 Vertrag (PDF) per WhatsApp senden</button></div>
-      <p class="tiny muted">${r.contractSentAt ? 'Verschickt am ' + fmtShort(r.contractSentAt) + '.' : 'Öffnet das Teilen-Menü deines Handys – dort WhatsApp und den Kunden wählen.'}${r.signedBy === 'link' ? ' Der Mieter kann den Vertrag auch selbst über seinen Link herunterladen.' : ''}</p>`}
+      ${ro ? '' : `<div class="btns">${m.telefon ? `<a class="btn wa grow" target="_blank" data-act="waContract" href="${waUrl(m.telefon, `Hallo${vorname}, hier ist dein unterschriebener Mietvertrag (${r.item?.name}, ${fmtShort(r.von)} – ${fmtShort(r.bis)}). Über den Link kannst du ihn jederzeit als PDF herunterladen:\n${link}`)}">📲 Vertrag an ${esc(m.name ? m.name.split(' ')[0] : 'Kunden')} senden</a>` : `<span class="small muted">Telefonnummer fehlt – oben bei Mietdaten eintragen.</span>`}<button class="btn sec sm" data-act="share">PDF als Datei teilen</button></div>
+      <p class="tiny muted">${r.contractSentAt ? 'Verschickt am ' + fmtShort(r.contractSentAt) + '.' : 'Öffnet WhatsApp direkt im Chat mit dem Kunden – du musst nur noch auf Senden tippen.'}</p>`}
       <details style="margin-top:10px"><summary class="small">Vertrag ansehen</summary>${contractHtml(r)}</details>`
       : ro ? '<p class="small muted">Nicht unterschrieben.</p>'
       : !docsOk ? `<div class="alert amber">🪪 <span>Erst <b>Ausweis${need.includes('fuehrerschein') ? ' und Führerschein' : ''}</b> fotografieren und das Einverständnis anhaken – dann kannst du den Vertrag senden oder vor Ort unterschreiben lassen.</span></div>`
@@ -722,6 +722,8 @@ function bindRentalActions(r) {
     const a = e.target.closest('[data-act]'); if (!a) return;
     switch (a.dataset.act) {
       case 'linkSent': upd(r, { linkSentAt: r.linkSentAt || nowIso() }); break;
+      case 'waContract': upd(r, { contractSentAt: nowIso() }); break;
+      case 'waFinal': upd(r, { finalSentAt: nowIso() }); break;
       case 'copyLink': try { await navigator.clipboard.writeText(linkFor(r)); toast('Link kopiert', 'ok'); } catch { prompt('Link kopieren:', linkFor(r)); } upd(r, { linkSentAt: r.linkSentAt || nowIso() }); break;
       case 'share': {
         const fin = !!a.dataset.final;
