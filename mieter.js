@@ -3,8 +3,8 @@
 // ============================================================
 import {
   $, $$, esc, num, eur, nowIso, fmtDT, fmtShort, rentalDays, toast, PHOTO_KINDS, LICENSE_CLASSES,
-  rentalStatus, feesTotal, requiredDocs, docsComplete, COND_KINDS, contractHtml, downloadContract, compressImage, SignaturePad, initStore, isDemo, FEE_TYPES,
-} from './common.js?v=4';
+  rentalStatus, feesTotal, waLink, requiredDocs, docsComplete, COND_KINDS, contractHtml, downloadContract, compressImage, SignaturePad, initStore, isDemo, FEE_TYPES,
+} from './common.js?v=6';
 
 const app = $('#app');
 const id = new URLSearchParams(location.search).get('id');
@@ -19,7 +19,7 @@ async function boot() {
     const prev = r; r = doc;
     if (!r) return fail('Diese Miete wurde nicht gefunden oder ist nicht mehr aktiv.');
     // nicht neu zeichnen, während der Mieter tippt – außer bei wichtigen Änderungen
-    const important = !prev || prev.lockReleased !== r.lockReleased || prev.closed !== r.closed || prev.lockCode !== r.lockCode || !!prev.signature !== !!r.signature || prev.mietePaid !== r.mietePaid || prev.kautionStatus !== r.kautionStatus;
+    const important = !prev || prev.lockReleased !== r.lockReleased || prev.closed !== r.closed || prev.lockCode !== r.lockCode || !!prev.signature !== !!r.signature || prev.mietePaid !== r.mietePaid || prev.kautionStatus !== r.kautionStatus || prev.renterPickupAt !== r.renterPickupAt || prev.renterReturnAt !== r.renterReturnAt || prev.openRequestAt !== r.openRequestAt;
     if (!dirty || important) render();
   }, () => fail('Diese Miete wurde nicht gefunden oder der Link ist abgelaufen.'));
 }
@@ -31,6 +31,9 @@ async function save(patch, msg) {
 }
 
 const V = () => r.vermieter || {};
+let notify = null; // Text für "Vermieter Bescheid geben"
+const me = () => (r.mieter?.name || '').trim();
+const toOwner = (text) => waLink(V().telefon, `Hallo ${(V().name || '').split(' ')[0]}, ${text}${me() ? ' – ' + me() : ''}`);
 const needsLicense = () => requiredDocs(r).includes('fuehrerschein');
 const docKinds = () => requiredDocs(r);
 const localPrev = {}; // gerade hochgeladene Ausweisfotos (nur Vorschau in dieser Sitzung)
@@ -43,6 +46,7 @@ function head() {
     <dt>Abholung</dt><dd>${fmtDT(r.von)}</dd><dt>Rückgabe</dt><dd>${fmtDT(r.bis)}</dd>
     <dt>Miete</dt><dd>${eur(r.preis)} <span class="muted small">(${rentalDays(r.von, r.bis)} Tag${rentalDays(r.von, r.bis) > 1 ? 'e' : ''})</span></dd>
     <dt>Kaution</dt><dd>${eur(r.kaution)}</dd>
+    ${num(r.cfg?.selbstbeteiligung) ? `<dt>Selbstbeteiligung</dt><dd>${eur(r.cfg.selbstbeteiligung)} <span class="muted small">je Schaden</span></dd>` : ''}
   </dl></div>`;
 }
 
@@ -127,8 +131,9 @@ function renderWizard() {
       if (pad.isEmpty()) return toast('Bitte unterschreiben', 'err');
       if (!dataOk() || !docsOk()) { step = 0; return render(); }
       $('#signBtn').disabled = true;
+      notify = `ich habe den Mietvertrag für ${r.item?.name || 'die Miete'} (${fmtShort(r.von)}) gerade unterschrieben.`;
       if (await save({ signature: pad.toDataURL(), signedAt: nowIso(), signedBy: 'link' }, 'Danke! Vertrag unterschrieben ✓')) window.scrollTo(0, 0);
-      else $('#signBtn').disabled = false;
+      else { notify = null; $('#signBtn').disabled = false; }
     };
   }
 }
@@ -151,7 +156,7 @@ function renderMain() {
       ? `<div class="alert teal">🔓 <span><b>Das Schloss ist offen.</b> Du kannst den ${esc(r.item?.name || 'Mietgegenstand')} jetzt mitnehmen.</span></div>`
       : r.openRequestAt
         ? `<div class="alert teal">⏳ <span>Anfrage gesendet (${fmtShort(r.openRequestAt)}). ${esc(v.name || 'Dein Vermieter')} öffnet gleich aus der Ferne.</span></div>${v.telefon ? `<a class="btn ghost block" href="tel:${esc(v.telefon)}">📞 Anrufen</a>` : ''}`
-        : `<p class="small">Wenn du vor Ort bist, tippe hier – das Schloss wird dann aus der Ferne geöffnet.</p><button class="btn block" id="openReq">📍 Ich bin da – bitte öffnen</button>`;
+        : `<p class="small">Wenn du vor Ort bist, tippe hier – ${esc(v.name || 'dein Vermieter')} bekommt eine WhatsApp und öffnet das Schloss.</p>${v.telefon ? `<a class="btn block" id="openReq" target="_blank" href="${toOwner(`ich bin jetzt am ${r.item?.name || 'Mietgegenstand'} und warte auf die Öffnung.`)}">📍 Ich bin da – bitte öffnen</a>` : `<button class="btn block" id="openReq">📍 Ich bin da – bitte öffnen</button>`}`;
     else lock = `<p class="small">Die Übergabe machst du persönlich mit ${esc(v.name || 'deinem Vermieter')}${v.telefon ? ` (<a href="tel:${esc(v.telefon)}">${esc(v.telefon)}</a>)` : ''}.</p>`;
   }
 
@@ -165,6 +170,7 @@ function renderMain() {
     </div>`;
 
   app.innerHTML = head() + `
+    ${notify && v.telefon ? `<div class="card" style="border-color:#25d366"><p style="margin-top:0"><b>Gib ${esc((v.name || 'deinem Vermieter').split(' ')[0])} kurz Bescheid:</b></p><a class="btn wa block" id="notifyBtn" target="_blank" href="${toOwner(notify)}">📲 Per WhatsApp Bescheid geben</a></div>` : ''}
     <div class="alert ${s.key === 'ueberfaellig' ? 'red' : 'teal'}">✅ <span>Vertrag unterschrieben am ${fmtShort(r.signedAt)}. ${s.key === 'ueberfaellig' ? '<b>Die Mietzeit ist abgelaufen – bitte zurückbringen oder dich melden.</b>' : ''}</span></div>
 
     <div class="card"><h2>💶 Bezahlen</h2>
@@ -191,8 +197,9 @@ function renderMain() {
   loadCondPhotos();
   $('#openReq') && ($('#openReq').onclick = () => save({ openRequestAt: nowIso() }, 'Anfrage gesendet'));
   $('#pdf').onclick = async () => { toast('PDF wird erstellt …'); try { await downloadContract(r, []); } catch (e) { toast(e.message, 'err'); } };
-  $('#pickBtn') && ($('#pickBtn').onclick = () => save({ renterPickupAt: nowIso() }, 'Gute Fahrt! 🚗'));
-  $('#retBtn') && ($('#retBtn').onclick = () => save({ renterReturnAt: nowIso() }, 'Danke für die Rückgabe!'));
+  $('#pickBtn') && ($('#pickBtn').onclick = () => { notify = `ich habe ${r.item?.name || 'den Mietgegenstand'} abgeholt, die Fotos sind hochgeladen.`; save({ renterPickupAt: nowIso() }, 'Gute Fahrt! 🚗'); });
+  $('#retBtn') && ($('#retBtn').onclick = () => { notify = `ich habe ${r.item?.name || 'den Mietgegenstand'} zurückgebracht, die Rückgabe-Fotos sind hochgeladen.`; save({ renterReturnAt: nowIso() }, 'Danke für die Rückgabe!'); });
+  $('#notifyBtn') && ($('#notifyBtn').onclick = () => setTimeout(() => { notify = null; render(); }, 500));
   $$('[data-ph]').forEach(inp => inp.onchange = async () => {
     const kind = inp.dataset.ph, files = [...inp.files]; if (!files.length || busy) return;
     busy = true; toast(`${files.length} Foto(s) werden hochgeladen …`);

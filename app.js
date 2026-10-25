@@ -5,17 +5,18 @@ import {
   $, $$, esc, num, eur, nowIso, toLocalInput, dayKey, fmtDate, fmtDT, fmtShort, rentalDays, toast,
   ITEM_TYPES, LOCK_TYPES, DEFAULT_CHECKLIST, PHOTO_KINDS, ID_KINDS, FEE_TYPES, LICENSE_CLASSES,
   DEFAULT_SETTINGS, DEFAULT_TERMS, rentalStatus, requiredDocs, docsComplete, COND_KINDS, feesTotal, suggestLateFee, contractHtml,
-  downloadContract, shareContract, kautionPayout, compressImage, SignaturePad, initStore, isDemo, APP_NAME,
-} from './common.js?v=4';
+  downloadContract, shareContract, kautionPayout, compressImage, calcPrice, waLink, normPhone, EXPENSE_CATS, DAMAGE_STATUS, DAMAGE_PAYER, SignaturePad, initStore, isDemo, APP_NAME,
+} from './common.js?v=6';
 
 let store, user = null;
-let items = [], rentals = [], settings = { ...DEFAULT_SETTINGS };
+let items = [], rentals = [], customers = [], expenses = [], damages = [], settings = { ...DEFAULT_SETTINGS };
 let started = false, dirty = false, pending = false;
 const photoCache = {};
 const ui = { calMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1), calItem: '', calSel: dayKey(new Date()), listFilter: 'offen', year: new Date().getFullYear() };
 const app = $('#app'), nav = $('#nav');
 
 // ---------- Start ----------
+try { if (localStorage.getItem('mietbox_theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch { }
 boot();
 async function boot() {
   try { store = await initStore(); }
@@ -31,6 +32,9 @@ async function start() {
   if (num(settings.loeschTage) === 30) settings.loeschTage = 90;
   let first = 0;
   store.watchCol('items', d => { items = d.sort((a, b) => (a.name || '').localeCompare(b.name || '')); refresh(); });
+  store.watchCol('customers', d => { customers = d.sort((a, b) => (a.name || '').localeCompare(b.name || '')); refresh(); });
+  store.watchCol('expenses', d => { expenses = d.sort((a, b) => (b.datum || '').localeCompare(a.datum || '')); refresh(); });
+  store.watchCol('damages', d => { damages = d.sort((a, b) => (b.datum || '').localeCompare(a.datum || '')); refresh(); });
   store.watchCol('rentals', d => {
     const before = new Map(rentals.map(r => [r.id, r]));
     rentals = d.sort((a, b) => new Date(a.von) - new Date(b.von));
@@ -79,7 +83,8 @@ function render(keepScroll) {
   const openState = keepScroll ? new Map($$('details', app).map(d => [d.querySelector('summary')?.textContent.trim().slice(0, 8), d.open])) : new Map();
   app.onclick = null;
   renderNav(p);
-  const views = { start: viewStart, kalender: viewCalendar, mieten: () => viewRentals(id), miete: () => viewRental(id), einnahmen: viewMoney, mehr: viewMore, artikel: () => id ? viewItem(id) : viewItems(), einstellungen: viewSettings };
+  const views = { start: viewStart, kalender: viewCalendar, mieten: () => viewRentals(id), miete: () => viewRental(id), einnahmen: viewMoney, mehr: viewMore, artikel: () => id ? viewItem(id) : viewItems(), einstellungen: viewSettings,
+    kunden: viewCustomers, kunde: () => viewCustomer(id), ausgabe: () => viewExpense(id), schaeden: viewDamages, schaden: () => viewDamage(id) };
   (views[p] || viewStart)();
   for (const d of $$('details', app)) { const k = d.querySelector('summary')?.textContent.trim().slice(0, 8); if (openState.has(k)) d.open = openState.get(k); }
   dirty = false;
@@ -95,8 +100,8 @@ const ICONS = {
 };
 function renderNav(p) {
   nav.hidden = false;
-  const active = p === 'miete' ? 'mieten' : (p === 'artikel' || p === 'einstellungen') ? 'mehr' : p;
-  const L = { start: 'Start', kalender: 'Kalender', mieten: 'Mieten', einnahmen: 'Einnahmen', mehr: 'Mehr' };
+  const active = p === 'miete' ? 'mieten' : p === 'ausgabe' ? 'einnahmen' : ['artikel', 'einstellungen', 'kunden', 'kunde', 'schaeden', 'schaden'].includes(p) ? 'mehr' : p;
+  const L = { start: 'Start', kalender: 'Kalender', mieten: 'Mieten', einnahmen: 'Finanzen', mehr: 'Mehr' };
   nav.innerHTML = `<div class="in">${Object.keys(L).map(k => `<a href="#/${k}" class="${active === k ? 'on' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[k]}</svg>${L[k]}</a>`).join('')}</div>`;
 }
 const header = (title, sub = '', back = '') => `
@@ -143,6 +148,9 @@ function viewStart() {
   const retToday = open.filter(r => dayKey(r.bis) === today && (r.pickedUpAt || r.renterPickupAt) && !(r.returnedAt || r.renterReturnAt));
   const unpaid = open.filter(r => !r.mietePaid && (r.pickedUpAt || r.renterPickupAt));
   const tuev = items.filter(i => i.tuevBis && (new Date(i.tuevBis) - now) < 60 * 864e5);
+  const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1);
+  const retTomorrow = open.filter(r => dayKey(r.bis) === dayKey(tmr) && (r.pickedUpAt || r.renterPickupAt) && !(r.returnedAt || r.renterReturnAt));
+  const openDamages = damages.filter(d => d.status !== 'erledigt');
   const active = open.filter(r => ['aktiv', 'ueberfaellig'].includes(st(r)));
   const upcoming = open.filter(r => new Date(r.von) > now && new Date(r.von) - now < 14 * 864e5 && dayKey(r.von) !== today);
   const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -154,6 +162,8 @@ function viewStart() {
     ...codeNeeded.map(r => `<a class="alert teal" href="#/miete/${r.id}">🔑 <span><b>Code freigeben:</b> ${esc(r.mieter?.name)} hat unterschrieben – Abholung ${fmtShort(r.von)}</span></a>`),
     ...settle.map(r => `<a class="alert blue" href="#/miete/${r.id}">🧾 <span><b>Abrechnen:</b> ${esc(r.item?.name)} von ${esc(r.mieter?.name || '?')} ist zurück – Zustand prüfen & Kaution abrechnen</span></a>`),
     ...tuev.map(i => `<a class="alert amber" href="#/artikel/${i.id}">🛠️ <span><b>TÜV/HU:</b> ${esc(i.name)} fällig bis ${fmtDate(i.tuevBis)}</span></a>`),
+    ...retTomorrow.map(r => `<div class="alert teal">🔔 <span style="flex:1"><a href="#/miete/${r.id}"><b>Rückgabe morgen:</b> ${esc(r.mieter?.name || '?')} (${esc(r.item?.name)}, ${fmtShort(r.bis)})</a>${r.mieter?.telefon ? `<br><a class="btn wa sm" style="margin-top:6px" target="_blank" href="${reminderUrl(r, 'rueckgabe')}">📲 Erinnerung senden</a>` : ''}</span></div>`),
+    ...(openDamages.length ? [`<a class="alert amber" href="#/schaeden">⚠️ <span><b>${openDamages.length} ${openDamages.length > 1 ? 'offene Schadensfälle' : 'offener Schadensfall'}</b> – Reparatur / Bezahlung klären</span></a>`] : []),
   ];
   const line = (r) => { const s = rentalStatus(r, now); return `<a class="list-item" href="#/miete/${r.id}"><div class="ic">${itemIcon(r.item?.typ)}</div><div class="grow"><div class="t">${esc(r.mieter?.name || 'Ohne Namen')}</div><div class="small muted">${esc(r.item?.name || '')} · ${fmtShort(r.von)} – ${fmtShort(r.bis)}</div></div><span class="badge ${s.cls}">${s.label}</span></a>`; };
   app.innerHTML = `${header(`Hallo${name ? ' ' + name : ''} 👋`, fmtDate(now))}
@@ -232,42 +242,100 @@ function viewCalendar() {
   $$('.cal .d').forEach(el => el.onclick = () => { ui.calSel = el.dataset.day; viewCalendar(); });
 }
 
-// ---------- Einnahmen ----------
+// ---------- Finanzen: Einnahmen, Ausgaben, Gewinn ----------
+const rentalIncome = (r) => r.storniert ? 0 : num(r.preis) + feesTotal(r);
+function itemStats(itemId) {
+  const inc = rentals.filter(r => r.itemId === itemId && !r.storniert).reduce((s, r) => s + rentalIncome(r), 0);
+  const exp = expenses.filter(e => e.itemId === itemId).reduce((s, e) => s + num(e.betrag), 0);
+  const kauf = expenses.filter(e => e.itemId === itemId && e.kategorie === 'anschaffung').reduce((s, e) => s + num(e.betrag), 0);
+  const n = rentals.filter(r => r.itemId === itemId && !r.storniert && r.signature).length;
+  return { inc, exp, kauf, gewinn: inc - exp, n, pct: exp ? Math.min(100, Math.round(inc / exp * 100)) : (inc ? 100 : 0) };
+}
 function viewMoney() {
   const Y = ui.year;
-  const rows = Array.from({ length: 12 }, (_, i) => ({ m: i, n: 0, miete: 0, geb: 0, bar: 0, pp: 0, offen: 0 }));
+  const rows = Array.from({ length: 12 }, (_, i) => ({ m: i, n: 0, miete: 0, geb: 0, bar: 0, pp: 0, offen: 0, aus: 0 }));
   for (const r of rentals) {
     const d = new Date(r.von); if (d.getFullYear() !== Y || r.storniert) continue;
     const row = rows[d.getMonth()]; const p = num(r.preis), g = feesTotal(r);
     row.n++; row.miete += p; row.geb += g;
-    if (r.mietePaid === 'bar') row.bar += p; else if (r.mietePaid === 'paypal') row.pp += p; else if (r.mietePaid === 'kaution') row.bar += p; else row.offen += p;
+    if (r.mietePaid === 'bar' || r.mietePaid === 'kaution') row.bar += p; else if (r.mietePaid === 'paypal') row.pp += p; else row.offen += p;
     if (!r.closed) row.offen += g; else if (r.kautionVia === 'paypal') row.pp += g; else row.bar += g;
   }
-  const sum = rows.reduce((s, r) => { for (const k of ['n', 'miete', 'geb', 'bar', 'pp', 'offen']) s[k] += r[k]; return s; }, { n: 0, miete: 0, geb: 0, bar: 0, pp: 0, offen: 0 });
-  const max = Math.max(1, ...rows.map(r => r.miete + r.geb));
+  const yExp = expenses.filter(e => (e.datum || '').startsWith(String(Y)));
+  for (const e of yExp) rows[new Date(e.datum).getMonth()].aus += num(e.betrag);
+  const sum = rows.reduce((s, r) => { for (const k of ['n', 'miete', 'geb', 'bar', 'pp', 'offen', 'aus']) s[k] += r[k]; return s; }, { n: 0, miete: 0, geb: 0, bar: 0, pp: 0, offen: 0, aus: 0 });
+  const umsatz = sum.miete + sum.geb, gewinn = umsatz - sum.aus;
+  const max = Math.max(1, ...rows.map(r => Math.max(r.miete + r.geb, r.aus)));
   const kautionHeld = rentals.filter(r => !r.closed && r.kautionStatus === 'erhalten').reduce((s, r) => s + num(r.kaution), 0);
-  const years = [...new Set([new Date().getFullYear(), ...rentals.map(r => new Date(r.von).getFullYear())])].sort();
-  app.innerHTML = `${header('Einnahmen')}
+  const years = [...new Set([new Date().getFullYear(), ...rentals.map(r => new Date(r.von).getFullYear()), ...expenses.map(e => new Date(e.datum).getFullYear())])].filter(Boolean).sort();
+  app.innerHTML = `${header('Finanzen')}
     <div class="row" style="margin-bottom:12px"><select id="yr">${years.map(y => `<option ${y === Y ? 'selected' : ''}>${y}</option>`).join('')}</select><button class="btn sec" id="csv">CSV</button></div>
     <div class="stats">
-      <div class="stat"><div class="v">${eur(sum.miete + sum.geb)}</div><div class="l">Umsatz ${Y} (${sum.n} Mieten)</div></div>
+      <div class="stat"><div class="v">${eur(umsatz)}</div><div class="l">Einnahmen ${Y} (${sum.n} Mieten)</div></div>
+      <div class="stat"><div class="v">${eur(sum.aus)}</div><div class="l">Ausgaben ${Y}</div></div>
+      <div class="stat ${gewinn < 0 ? 'warn' : ''}"><div class="v">${eur(gewinn)}</div><div class="l">Gewinn ${Y}</div></div>
       <div class="stat ${sum.offen ? 'warn' : ''}"><div class="v">${eur(sum.offen)}</div><div class="l">noch offen</div></div>
-      <div class="stat"><div class="v">${eur(sum.bar)}</div><div class="l">davon bar</div></div>
-      <div class="stat"><div class="v">${eur(sum.pp)}</div><div class="l">davon PayPal</div></div>
     </div>
+    <p class="small muted" style="margin-top:-4px">Davon bar ${eur(sum.bar)} · PayPal ${eur(sum.pp)}</p>
     ${kautionHeld ? `<div class="alert blue">🔒 <span>Du hältst gerade <b>${eur(kautionHeld)}</b> Kaution (gehört den Mietern, zählt nicht als Einnahme).</span></div>` : ''}
-    <div class="card" style="overflow-x:auto"><table class="money"><thead><tr><th>Monat</th><th>Mieten</th><th>Miete</th><th>Gebühren</th><th>Offen</th><th style="width:22%"></th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${new Date(Y, r.m, 1).toLocaleDateString('de-DE', { month: 'short' })}</td><td>${r.n || ''}</td><td>${r.miete ? eur(r.miete) : ''}</td><td>${r.geb ? eur(r.geb) : ''}</td><td>${r.offen ? eur(r.offen) : ''}</td><td><div class="barline" style="width:${((r.miete + r.geb) / max * 100).toFixed(0)}%;${r.miete + r.geb ? '' : 'opacity:0'}"></div></td></tr>`).join('')}
-    <tr class="sum"><td>Summe</td><td>${sum.n}</td><td>${eur(sum.miete)}</td><td>${eur(sum.geb)}</td><td>${eur(sum.offen)}</td><td></td></tr></tbody></table></div>
-    <p class="small muted">Gezählt nach Mietbeginn. Gebühren gelten als bezahlt, sobald die Miete abgeschlossen ist. Tipp: Die CSV kannst du für die Steuer an den Steuerberater geben.</p>`;
+
+    ${items.length ? `<h2>Hat sich bezahlt gemacht?</h2><div class="card">${items.map(i => { const st = itemStats(i.id); return `
+      <div style="margin-bottom:12px"><div class="row between"><b>${itemIcon(i.typ)} ${esc(i.name)}</b><span class="badge ${st.gewinn >= 0 && st.exp ? 'green' : 'amber'}">${st.exp ? (st.gewinn >= 0 ? 'bezahlt ✓' : st.pct + ' %') : 'keine Kosten erfasst'}</span></div>
+      <div style="height:10px;border-radius:5px;background:var(--line);margin:6px 0;overflow:hidden"><div style="height:100%;width:${st.pct}%;background:var(--accent)"></div></div>
+      <div class="small muted">Einnahmen ${eur(st.inc)} · Kosten ${eur(st.exp)} · ${st.gewinn >= 0 ? 'Gewinn' : 'noch offen'} ${eur(Math.abs(st.gewinn))} · ${st.n} Mieten</div></div>`; }).join('')}
+      <p class="tiny muted">Alle Jahre zusammen. Kosten = Ausgaben, die dem Artikel zugeordnet sind (z. B. Kaufpreis, Versicherung, TÜV).</p></div>` : ''}
+
+    <h2>Monate ${Y}</h2>
+    <div class="card" style="overflow-x:auto"><table class="money"><thead><tr><th>Monat</th><th>Mieten</th><th>Einnahmen</th><th>Ausgaben</th><th>Gewinn</th><th style="width:18%"></th></tr></thead><tbody>
+    ${rows.map(r => { const e = r.miete + r.geb, g = e - r.aus; return `<tr><td>${new Date(Y, r.m, 1).toLocaleDateString('de-DE', { month: 'short' })}</td><td>${r.n || ''}</td><td>${e ? eur(e) : ''}</td><td>${r.aus ? eur(r.aus) : ''}</td><td style="${g < 0 ? 'color:var(--red)' : ''}">${e || r.aus ? eur(g) : ''}</td><td><div class="barline" style="width:${(e / max * 100).toFixed(0)}%;${e ? '' : 'opacity:0'}"></div>${r.aus ? `<div class="barline" style="margin-top:2px;background:var(--red);width:${(r.aus / max * 100).toFixed(0)}%"></div>` : ''}</td></tr>`; }).join('')}
+    <tr class="sum"><td>Summe</td><td>${sum.n}</td><td>${eur(umsatz)}</td><td>${eur(sum.aus)}</td><td>${eur(gewinn)}</td><td></td></tr></tbody></table></div>
+
+    <div class="row between"><h2 style="margin:0">Ausgaben ${Y}</h2><a class="btn sm" href="#/ausgabe/neu">+ Ausgabe</a></div>
+    <div class="card list" style="margin-top:8px">${yExp.length ? yExp.map(e => `<a class="list-item" href="#/ausgabe/${e.id}"><div class="ic">🧾</div><div class="grow"><div class="t">${esc(EXPENSE_CATS[e.kategorie] || e.kategorie)}${e.notiz ? ' – ' + esc(e.notiz) : ''}</div><div class="small muted">${fmtDate(e.datum)}${e.itemId ? ' · ' + esc(itemById(e.itemId)?.name || '') : ''}${e.beleg ? ' · 📎 Beleg' : ''}</div></div><b>${eur(e.betrag)}</b></a>`).join('') : `<div class="empty">Noch keine Ausgaben. Trag z. B. den Kaufpreis des Anhängers ein, dann siehst du, ab wann er sich bezahlt macht.</div>`}</div>
+    <p class="small muted">Einnahmen nach Mietbeginn gezählt, Gebühren zählen ab Abschluss als bezahlt. Die CSV enthält Einnahmen und Ausgaben – gut für die Steuererklärung.</p>`;
   $('#yr').onchange = (e) => { ui.year = +e.target.value; viewMoney(); };
   $('#csv').onclick = () => {
-    const head = ['Beginn', 'Ende', 'Artikel', 'Mieter', 'Miete', 'Gebühren', 'Bezahlt', 'Kaution', 'Kaution-Status'];
-    const lines = rentals.filter(r => !r.storniert && new Date(r.von).getFullYear() === Y).map(r => [fmtShort(r.von), fmtShort(r.bis), r.item?.name, r.mieter?.name, num(r.preis).toFixed(2).replace('.', ','), feesTotal(r).toFixed(2).replace('.', ','), r.mietePaid || 'offen', num(r.kaution).toFixed(2).replace('.', ','), r.kautionStatus || 'offen']);
-    const csv = [head, ...lines].map(l => l.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
-    downloadBlob(new Blob(['﻿' + csv], { type: 'text/csv' }), `Mietbox_Einnahmen_${Y}.csv`);
+    const f2 = (n) => num(n).toFixed(2).replace('.', ',');
+    const head = ['Art', 'Datum', 'Ende', 'Artikel', 'Kunde / Kategorie', 'Betrag', 'davon Gebühren', 'Bezahlt', 'Notiz'];
+    const inc = rentals.filter(r => !r.storniert && new Date(r.von).getFullYear() === Y).map(r => ['Einnahme', fmtShort(r.von), fmtShort(r.bis), r.item?.name, r.mieter?.name, f2(rentalIncome(r)), f2(feesTotal(r)), r.mietePaid || 'offen', r.preisInfo || '']);
+    const out = yExp.map(e => ['Ausgabe', fmtDate(e.datum), '', itemById(e.itemId)?.name || '', EXPENSE_CATS[e.kategorie] || e.kategorie, '-' + f2(e.betrag), '', '', e.notiz || '']);
+    const csv = [head, ...inc, ...out].map(l => l.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
+    downloadBlob(new Blob(['﻿' + csv], { type: 'text/csv' }), `Mietbox_Finanzen_${Y}.csv`);
   };
 }
+
+function viewExpense(id) {
+  const isNew = !id || id.startsWith('neu');
+  const q = new URLSearchParams(location.hash.split('?')[1] || '');
+  const e = isNew ? { datum: dayKey(new Date()), kategorie: q.get('k') || 'anschaffung', itemId: q.get('i') || items[0]?.id || '', betrag: q.get('b') || '', notiz: q.get('n') || '' } : expenses.find(x => x.id === id);
+  if (!e) { app.innerHTML = header('Nicht gefunden', '', '#/einnahmen'); return; }
+  app.innerHTML = `${header(isNew ? 'Neue Ausgabe' : 'Ausgabe', '', '#/einnahmen')}
+  <form class="card" id="ef">
+    <div class="grid2"><div><label>Betrag (€)</label><input name="betrag" inputmode="decimal" required value="${esc(e.betrag)}"></div><div><label>Datum</label><input name="datum" type="date" required value="${esc(e.datum)}"></div></div>
+    <label>Kategorie</label><select name="kategorie">${Object.entries(EXPENSE_CATS).map(([k, v]) => `<option value="${k}" ${e.kategorie === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+    <label>Gehört zu Artikel</label><select name="itemId"><option value="">– allgemein –</option>${items.map(i => `<option value="${i.id}" ${e.itemId === i.id ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select>
+    <label>Notiz</label><input name="notiz" value="${esc(e.notiz)}" placeholder="z. B. Kaufpreis gebraucht, Versicherung 2027">
+    <label>Beleg (Foto, optional)</label>
+    <div class="photos">${e.beleg ? `<div class="photo"><img src="${e.beleg}" data-full alt=""><button type="button" class="x" id="delBeleg">✕</button></div>` : ''}<label class="upload"><span class="big">📷</span>Beleg<input type="file" accept="image/*" id="belegIn"></label></div>
+    <div class="btns"><button class="btn grow">Speichern</button>${isNew ? '' : '<button type="button" class="btn danger" id="delE">Löschen</button>'}</div>
+  </form>`;
+  const f = $('#ef'); let beleg = e.beleg || null;
+  f.addEventListener('input', () => dirty = true);
+  $('#belegIn').onchange = async (ev) => { const file = ev.target.files[0]; if (!file) return; beleg = await compressImage(file, { max: 1100, quality: 0.55 }); const ph = document.createElement('div'); ph.className = 'photo'; ph.innerHTML = `<img src="${beleg}" alt="">`; $('.photos', f).prepend(ph); toast('Beleg angehängt – Speichern nicht vergessen'); };
+  $('#delBeleg') && ($('#delBeleg').onclick = () => { beleg = null; $('#delBeleg').parentElement.remove(); });
+  app.onclick = (ev) => { const img = ev.target.closest('img[data-full]'); if (img) openViewer(img.src, 'Beleg'); };
+  f.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const d = { betrag: num(f.betrag.value), datum: f.datum.value, kategorie: f.kategorie.value, itemId: f.itemId.value, notiz: f.notiz.value.trim(), beleg, updatedAt: nowIso() };
+    if (!d.betrag) return toast('Betrag eingeben', 'err');
+    const nid = isNew ? store.newId() : id;
+    try { await store.set('expenses', nid, { ...(isNew ? { createdAt: nowIso() } : e), ...d, id: undefined }); } catch (err) { return toast('Fehler: ' + err.message, 'err'); }
+    if (q.get('d')) await store.update('damages', q.get('d'), { expenseId: nid }).catch(() => { });
+    dirty = false; toast('Gespeichert', 'ok'); history.back();
+  };
+  $('#delE') && ($('#delE').onclick = async () => { if (!confirm('Ausgabe löschen?')) return; await store.del('expenses', id); location.hash = '#/einnahmen'; });
+}
+
 function downloadBlob(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
 
 // ---------- Mehr ----------
@@ -275,39 +343,65 @@ function viewMore() {
   app.innerHTML = `${header('Mehr')}
     <div class="card list">
       <a class="list-item" href="#/mieten/archiv"><div class="ic">🗄️</div><div class="grow"><div class="t">Archiv</div><div class="small muted">Abgeschlossene Mieten · Suche „Wer hatte den Anhänger am …?“</div></div><span class="chev">›</span></a>
+      <a class="list-item" href="#/kunden"><div class="ic">👥</div><div class="grow"><div class="t">Kunden</div><div class="small muted">Stammkunden, Historie, Rabatt, gesperrte Kunden</div></div><span class="chev">›</span></a>
+      <a class="list-item" href="#/schaeden"><div class="ic">⚠️</div><div class="grow"><div class="t">Schadensakte</div><div class="small muted">Schäden mit Fotos, Kosten, Reparatur, Versicherung</div></div><span class="chev">›</span></a>
       <a class="list-item" href="#/artikel"><div class="ic">🚚</div><div class="grow"><div class="t">Artikel</div><div class="small muted">Anhänger, Werkzeuge, E-Roller – Preise, Kaution, TÜV</div></div><span class="chev">›</span></a>
       <a class="list-item" href="#/einstellungen"><div class="ic">⚙️</div><div class="grow"><div class="t">Einstellungen</div><div class="small muted">Deine Daten, PayPal, Gebühren, Vertrag, Unterschrift</div></div><span class="chev">›</span></a>
-      <a class="list-item" href="#" id="backup"><div class="ic">💾</div><div class="grow"><div class="t">Backup herunterladen</div><div class="small muted">Alle Mieten & Artikel als Datei (ohne Fotos)</div></div></a>
+      <a class="list-item" href="#" id="backup"><div class="ic">💾</div><div class="grow"><div class="t">Backup herunterladen</div><div class="small muted">Mieten, Artikel, Kunden, Ausgaben, Schäden (ohne Fotos)</div></div></a>
       <a class="list-item" href="#" id="logout"><div class="ic">🚪</div><div class="grow"><div class="t">Abmelden</div><div class="small muted">${esc(user?.email || '')}</div></div></a>
     </div>
     ${isDemo ? `<button class="btn danger block" id="demoReset">Demo-Daten komplett löschen</button>` : ''}
     <p class="small muted center">${APP_NAME} · ${isDemo ? 'Demo-Modus' : 'online synchronisiert'}</p>`;
-  $('#backup').onclick = (e) => { e.preventDefault(); downloadBlob(new Blob([JSON.stringify({ exportiert: nowIso(), settings, items, rentals }, null, 1)], { type: 'application/json' }), `Mietbox_Backup_${dayKey(new Date())}.json`); };
+  $('#backup').onclick = (e) => { e.preventDefault(); downloadBlob(new Blob([JSON.stringify({ exportiert: nowIso(), settings, items, rentals, customers, expenses, damages: damages.map(d => ({ ...d, photos: (d.photos || []).length + ' Foto(s)' })) }, null, 1)], { type: 'application/json' }), `Mietbox_Backup_${dayKey(new Date())}.json`); };
   $('#logout').onclick = (e) => { e.preventDefault(); store.logout(); };
   $('#demoReset') && ($('#demoReset').onclick = () => { if (confirm('Alle Demo-Daten löschen?')) { localStorage.removeItem('mietbox_demo_v1'); location.hash = ''; location.reload(); } });
 }
 
 // ---------- Artikel ----------
+function extrasEditorHtml(list) {
+  return `<div id="exList">${(list || []).map((x, i) => extraRow(x, i)).join('')}</div><button type="button" class="btn ghost sm" id="exAdd">+ Zubehör hinzufügen</button>`;
+}
+const extraRow = (x = {}, i = 0) => `<div class="row ex-row" style="margin-bottom:6px"><input class="ex-name" placeholder="z. B. Plane" value="${esc(x.name)}" style="flex:2"><input class="ex-preis" inputmode="decimal" placeholder="€" value="${esc(x.preis ?? '')}" style="flex:1;min-width:60px"><label class="check" style="padding:0;font-size:.8rem;white-space:nowrap"><input type="checkbox" class="ex-tag" ${x.proTag ? 'checked' : ''}> /Tag</label><button type="button" class="btn ghost sm ex-del">✕</button></div>`;
+function readExtras() { return $$('.ex-row').map(r => ({ name: $('.ex-name', r).value.trim(), preis: num($('.ex-preis', r).value), proTag: $('.ex-tag', r).checked })).filter(x => x.name); }
+
 function viewItems() {
   app.innerHTML = `${header('Artikel', 'Was du verleihst', '#/mehr')}
     <div class="card list">${items.length ? items.map(i => {
       const tuevSoon = i.tuevBis && (new Date(i.tuevBis) - new Date()) < 60 * 864e5;
       const busy = rentals.find(r => r.itemId === i.id && !r.closed && (r.pickedUpAt || r.renterPickupAt) && !(r.returnedAt || r.renterReturnAt));
-      return `<a class="list-item" href="#/artikel/${i.id}"><div class="ic">${itemIcon(i.typ)}</div><div class="grow"><div class="t">${esc(i.name)}</div><div class="small muted">${eur(i.tagespreis)} / Tag · Kaution ${eur(i.kaution)}${i.kennzeichen ? ' · ' + esc(i.kennzeichen) : ''}</div></div>${busy ? '<span class="badge green">unterwegs</span>' : '<span class="badge grey">da</span>'}${tuevSoon ? ' <span class="badge red">TÜV</span>' : ''}</a>`;
+      const dmg = damages.some(d => d.itemId === i.id && d.status !== 'erledigt');
+      return `<a class="list-item" href="#/artikel/${i.id}"><div class="ic">${itemIcon(i.typ)}</div><div class="grow"><div class="t">${esc(i.name)}</div><div class="small muted">${eur(i.tagespreis)} / Tag · Kaution ${eur(i.kaution)}${i.kennzeichen ? ' · ' + esc(i.kennzeichen) : ''}</div></div>${busy ? '<span class="badge green">unterwegs</span>' : '<span class="badge grey">da</span>'}${tuevSoon ? ' <span class="badge red">TÜV</span>' : ''}${dmg ? ' <span class="badge amber">Schaden</span>' : ''}</a>`;
     }).join('') : `<div class="empty">Noch nichts angelegt.</div>`}</div>
     <a class="btn block" href="#/artikel/neu">+ Artikel anlegen</a>`;
 }
 
 function viewItem(id) {
   const isNew = id === 'neu';
-  const it = isNew ? { typ: 'anhaenger', lockType: 'fern', gps: true, tagespreis: 25, kaution: 100 } : itemById(id);
+  const it = isNew ? { typ: 'anhaenger', lockType: 'fern', gps: true, tagespreis: 25, kaution: 100, extras: [] } : itemById(id);
   if (!it) { app.innerHTML = header('Nicht gefunden', '', '#/artikel'); return; }
+  const st = isNew ? null : itemStats(id);
+  const dmgs = isNew ? [] : damages.filter(d => d.itemId === id);
   app.innerHTML = `${header(isNew ? 'Neuer Artikel' : esc(it.name), '', '#/artikel')}
+  ${st ? `<div class="card tight"><div class="row between"><b>Bilanz (alle Jahre)</b><span class="badge ${st.gewinn >= 0 && st.exp ? 'green' : 'amber'}">${st.exp ? (st.gewinn >= 0 ? 'hat sich bezahlt gemacht ✓' : st.pct + ' % wieder drin') : 'Kosten noch nicht erfasst'}</span></div>
+    <div style="height:10px;border-radius:5px;background:var(--line);margin:8px 0;overflow:hidden"><div style="height:100%;width:${st.pct}%;background:var(--accent)"></div></div>
+    <div class="small muted">Einnahmen ${eur(st.inc)} · Kosten ${eur(st.exp)} · ${st.n} Mieten</div>
+    <div class="btns"><a class="btn sec sm" href="#/ausgabe/neu?i=${id}&k=anschaffung">+ Kaufpreis / Kosten</a><a class="btn ghost sm" href="#/schaden/neu?i=${id}">⚠️ Schaden erfassen</a></div></div>` : ''}
+  ${dmgs.length ? `<div class="card list">${dmgs.map(damageLine).join('')}</div>` : ''}
   <form class="card" id="itf">
     <label>Bezeichnung</label><input name="name" required value="${esc(it.name)}" placeholder="z. B. Anhänger 750 kg Plane">
     <label>Art</label><select name="typ">${Object.entries(ITEM_TYPES).map(([k, v]) => `<option value="${k}" ${it.typ === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+    <h3 style="margin-top:14px">Preise</h3>
     <div class="grid2"><div><label>Preis pro Tag (€)</label><input name="tagespreis" inputmode="decimal" value="${esc(it.tagespreis ?? '')}"></div>
-    <div><label>Kaution (€)</label><input name="kaution" inputmode="decimal" value="${esc(it.kaution ?? '')}"></div></div>
+    <div><label>Kaution (€)</label><input name="kaution" inputmode="decimal" value="${esc(it.kaution ?? '')}"></div>
+    <div><label>Halber Tag, bis 5 Std. (€)</label><input name="preisHalbtag" inputmode="decimal" value="${esc(it.preisHalbtag ?? '')}" placeholder="optional"></div>
+    <div><label>Wochenende (€)</label><input name="preisWochenende" inputmode="decimal" value="${esc(it.preisWochenende ?? '')}" placeholder="optional"></div>
+    <div><label>Woche, 7 Tage (€)</label><input name="preisWoche" inputmode="decimal" value="${esc(it.preisWoche ?? '')}" placeholder="optional"></div>
+    <div><label>Selbstbeteiligung (€)</label><input name="selbstbeteiligung" inputmode="decimal" value="${esc(it.selbstbeteiligung || '')}" placeholder="Standard: ${esc(settings.selbstbeteiligung ?? 1000)}"></div></div>
+    <p class="tiny muted">Leere Felder werden nicht genutzt. Die App nimmt automatisch den günstigsten passenden Preis. Wochenende = höchstens 3 Tage inkl. Samstag und Sonntag.</p>
+    <h3 style="margin-top:14px">Zubehör zum Dazubuchen</h3>
+    <p class="tiny muted">Name, Preis und ob der Preis pro Tag oder einmalig gilt. Preis 0 = kostenlos dabei.</p>
+    ${extrasEditorHtml(it.extras)}
+    <h3 style="margin-top:14px">Details</h3>
     <div class="grid2"><div><label>Kennzeichen</label><input name="kennzeichen" value="${esc(it.kennzeichen)}" placeholder="WES-AB 123"></div>
     <div><label>zul. Gesamtgewicht (kg)</label><input name="zgg" inputmode="numeric" value="${esc(it.zgg)}" placeholder="750"></div></div>
     <label>TÜV / HU gültig bis</label><input name="tuevBis" type="month" value="${esc(it.tuevBis ? it.tuevBis.slice(0, 7) : '')}">
@@ -321,9 +415,13 @@ function viewItem(id) {
   f.addEventListener('input', () => dirty = true);
   f.typ.onchange = () => { if (!f.checklist.dataset.touched) f.checklist.value = DEFAULT_CHECKLIST[f.typ.value]; };
   f.checklist.oninput = () => f.checklist.dataset.touched = 1;
+  $('#exAdd').onclick = () => { $('#exList').insertAdjacentHTML('beforeend', extraRow()); dirty = true; };
+  $('#exList').onclick = (e) => { const d = e.target.closest('.ex-del'); if (d) { d.closest('.ex-row').remove(); dirty = true; } };
   f.onsubmit = async (e) => {
     e.preventDefault();
-    const d = { name: f.name.value.trim(), typ: f.typ.value, tagespreis: num(f.tagespreis.value), kaution: num(f.kaution.value), kennzeichen: f.kennzeichen.value.trim(), zgg: f.zgg.value.trim(), tuevBis: f.tuevBis.value ? f.tuevBis.value + '-28' : '', lockType: f.lockType.value, gps: f.gps.checked, checklist: f.checklist.value.trim(), notiz: f.notiz.value.trim() };
+    const d = { name: f.name.value.trim(), typ: f.typ.value, tagespreis: num(f.tagespreis.value), kaution: num(f.kaution.value),
+      preisHalbtag: num(f.preisHalbtag.value), preisWochenende: num(f.preisWochenende.value), preisWoche: num(f.preisWoche.value), selbstbeteiligung: num(f.selbstbeteiligung.value), extras: readExtras(),
+      kennzeichen: f.kennzeichen.value.trim(), zgg: f.zgg.value.trim(), tuevBis: f.tuevBis.value ? f.tuevBis.value + '-28' : '', lockType: f.lockType.value, gps: f.gps.checked, checklist: f.checklist.value.trim(), notiz: f.notiz.value.trim() };
     const nid = isNew ? store.newId() : id;
     await store.set('items', nid, d); dirty = false; toast('Gespeichert', 'ok'); location.hash = '#/artikel';
   };
@@ -346,7 +444,7 @@ function viewSettings() {
     <label>PayPal.me-Name</label><input name="paypalMe" value="${esc(s.paypalMe)}" placeholder="z. B. MaxMustermann (aus paypal.me/MaxMustermann)">
   </div>
   <div class="card"><h2>Gebühren & Regeln</h2>
-    <div class="grid2"><div><label>Reinigungspauschale (€)</label><input name="reinigung" inputmode="decimal" value="${esc(s.reinigung)}"></div>
+    <div class="grid2"><div><label>Selbstbeteiligung je Schaden (€)</label><input name="selbstbeteiligung" inputmode="decimal" value="${esc(s.selbstbeteiligung ?? 1000)}"></div><div><label>Reinigungspauschale (€)</label><input name="reinigung" inputmode="decimal" value="${esc(s.reinigung)}"></div>
     <div><label>Verspätung je Stunde (€)</label><input name="verspaetungStunde" inputmode="decimal" value="${esc(s.verspaetungStunde)}"></div>
     <div><label>Kulanzzeit (Minuten)</label><input name="kulanzMinuten" inputmode="numeric" value="${esc(s.kulanzMinuten)}"></div>
     </div>
@@ -360,6 +458,7 @@ function viewSettings() {
     <textarea name="terms" rows="16" style="font-size:.85rem">${esc(s.terms || DEFAULT_TERMS)}</textarea>
     <button type="button" class="btn ghost sm" id="resetTerms">Vorlage wiederherstellen</button>
   </details>
+  <div class="card"><h2>Design</h2><label class="check"><input type="checkbox" id="darkT" ${document.documentElement.dataset.theme === 'dark' ? 'checked' : ''}> Dunkles Design (nur auf diesem Handy)</label></div>
   <button class="btn block">Einstellungen speichern</button>
   </form>
   <div class="card" style="margin-top:12px"><h2>Deine Unterschrift</h2><p class="small muted">Wird automatisch in jeden Vertrag eingesetzt.</p>
@@ -367,10 +466,11 @@ function viewSettings() {
   </div>`;
   const f = $('#sf');
   f.addEventListener('input', () => dirty = true);
+  $('#darkT').onchange = (e) => { const d = e.target.checked; document.documentElement.dataset.theme = d ? 'dark' : ''; try { localStorage.setItem('mietbox_theme', d ? 'dark' : 'light'); } catch { } };
   $('#resetTerms').onclick = () => { if (confirm('Vertragstext auf Vorlage zurücksetzen?')) f.terms.value = DEFAULT_TERMS; };
   f.onsubmit = async (e) => {
     e.preventDefault();
-    settings = { ...settings, name: f.name.value.trim(), adresse: f.adresse.value.trim(), telefon: f.telefon.value.trim(), email: f.email.value.trim(), paypalMe: f.paypalMe.value.trim().replace(/^.*paypal\.me\//i, '').replace(/\/.*$/, ''), reinigung: num(f.reinigung.value), verspaetungStunde: num(f.verspaetungStunde.value), kulanzMinuten: num(f.kulanzMinuten.value), loeschTage: Math.max(1, num(f.loeschTage.value)), fotoTage: Math.max(1, num(f.fotoTage.value)), terms: (f.terms.value.trim() === DEFAULT_TERMS.trim() ? '' : f.terms.value.trim()) };
+    settings = { ...settings, name: f.name.value.trim(), adresse: f.adresse.value.trim(), telefon: f.telefon.value.trim(), email: f.email.value.trim(), paypalMe: f.paypalMe.value.trim().replace(/^.*paypal\.me\//i, '').replace(/\/.*$/, ''), reinigung: num(f.reinigung.value), selbstbeteiligung: num(f.selbstbeteiligung.value), verspaetungStunde: num(f.verspaetungStunde.value), kulanzMinuten: num(f.kulanzMinuten.value), loeschTage: Math.max(1, num(f.loeschTage.value)), fotoTage: Math.max(1, num(f.fotoTage.value)), terms: (f.terms.value.trim() === DEFAULT_TERMS.trim() ? '' : f.terms.value.trim()) };
     await store.saveSettings(settings); dirty = false; toast('Gespeichert', 'ok');
   };
   if (s.ownerSignature) $('#newSig').onclick = () => { settings.ownerSignature = null; viewSettings(); };
@@ -404,7 +504,7 @@ function waUrl(phone, text) {
   return `https://wa.me/${p}?text=${encodeURIComponent(text)}`;
 }
 const ppUrl = (amount) => settings.paypalMe ? `https://paypal.me/${encodeURIComponent(settings.paypalMe)}/${num(amount).toFixed(2)}EUR` : '';
-const checklistLines = (r) => (r.item?.checklist || '').split('\n').map(s => s.trim()).filter(Boolean);
+const checklistLines = (r) => [...(r.item?.checklist || '').split('\n').map(s => s.trim()).filter(Boolean), ...(r.extras || []).map(x => 'Zubehör: ' + x.name)];
 async function upd(r, patch, msg) { try { await store.update('rentals', r.id, { ...patch, updatedAt: nowIso() }); if (msg) toast(msg, 'ok'); } catch (e) { toast('Fehler: ' + e.message, 'err'); } }
 const daysLeft = (fromIso, days) => Math.ceil((new Date(fromIso).getTime() + days * 864e5 - Date.now()) / 864e5);
 const idDays = () => num(settings.loeschTage) || 90;
@@ -427,7 +527,9 @@ function viewRental(id) {
     const d = q.get('d') ? new Date(q.get('d') + 'T10:00') : (() => { const x = new Date(); x.setMinutes(0, 0, 0); x.setHours(x.getHours() + 1); return x; })();
     const it = items[0];
     const bis = new Date(d); bis.setDate(bis.getDate() + 1);
-    r = { id: 'neu', itemId: it.id, item: itemSnap(it), von: toLocalInput(d), bis: toLocalInput(bis), preis: num(it.tagespreis), kaution: num(it.kaution), tagespreis: num(it.tagespreis), zahlungsart: 'bar', mieter: {} };
+    r = { id: 'neu', itemId: it.id, item: itemSnap(it), von: toLocalInput(d), bis: toLocalInput(bis), preis: num(it.tagespreis), kaution: num(it.kaution), tagespreis: num(it.tagespreis), zahlungsart: 'bar', mieter: {}, extras: [] };
+    const kc = q.get('k') && customerById(q.get('k'));
+    if (kc) { r.customerId = kc.id; r.rabatt = num(kc.rabatt); r.mieter = { name: kc.name, adresse: kc.adresse, telefon: kc.telefon, email: kc.email, geburtsdatum: kc.geburtsdatum, fuehrerschein: kc.fuehrerschein }; }
   } else {
     r = rentals.find(x => x.id === id);
     if (!r) { app.innerHTML = `${header('Miete', '', '#/mieten')}<div class="card empty">Lädt … oder nicht gefunden.</div>`; return; }
@@ -444,10 +546,16 @@ function viewRental(id) {
   <form id="rf"><fieldset ${dis} style="border:0;padding:0;margin:0;min-width:0">
     <label>Artikel</label><select name="itemId">${items.map(i => `<option value="${i.id}" ${r.itemId === i.id ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}${r.itemId && !itemById(r.itemId) ? `<option value="${r.itemId}" selected>${esc(r.item?.name)} (gelöscht)</option>` : ''}</select>
     <div class="grid2 stack"><div><label>Von</label><input type="datetime-local" name="von" value="${esc(r.von)}" required></div><div><label>Bis</label><input type="datetime-local" name="bis" value="${esc(r.bis)}" required></div></div>
-    <div class="grid2"><div><label>Miete (€) <span id="daysInfo" class="muted"></span></label><input name="preis" inputmode="decimal" value="${esc(r.preis)}"></div><div><label>Kaution (€)</label><input name="kaution" inputmode="decimal" value="${esc(r.kaution)}"></div></div>
+    <div id="extrasBox"></div>
+    <div class="grid2"><div><label>Rabatt (%)</label><input name="rabatt" inputmode="decimal" value="${esc(r.rabatt || '')}" placeholder="0"></div><div></div></div>
+    <div id="priceInfo" class="small" style="margin-top:8px;padding:8px 10px;border-radius:10px;background:var(--accent-soft);color:var(--accent)"></div>
+    <div class="grid2"><div><label>Miete gesamt (€) <span id="daysInfo" class="muted"></span></label><input name="preis" inputmode="decimal" value="${esc(num(r.preis).toFixed(2).replace('.', ',').replace(/,00$/, ''))}"></div><div><label>Kaution (€)</label><input name="kaution" inputmode="decimal" value="${esc(r.kaution)}"></div></div>
     <label>Zahlung</label><select name="zahlungsart"><option value="bar" ${r.zahlungsart !== 'paypal' ? 'selected' : ''}>Bar</option><option value="paypal" ${r.zahlungsart === 'paypal' ? 'selected' : ''}>PayPal</option></select>
     <div id="overlap"></div>
-    <hr><h3>Mieter</h3><p class="small muted">Kannst du auch leer lassen – der Mieter füllt es dann über den Link selbst aus.</p>
+    <hr><h3>Mieter</h3>
+    ${ro ? '' : `<label>👥 Stammkunde wählen</label><input list="custList" id="custPick" placeholder="Name oder Telefon tippen …" autocomplete="off"><datalist id="custList">${customers.map(c => `<option value="${esc(c.name)}${c.telefon ? ' · ' + esc(c.telefon) : ''}">`).join('')}</datalist>`}
+    <input type="hidden" name="customerId" value="${esc(r.customerId || '')}"><div id="custInfo"></div>
+    <p class="small muted">Oder neu eintragen – oder leer lassen, dann füllt der Mieter es über den Link selbst aus.</p>
     <label>Name</label><input name="m_name" value="${esc(m.name)}" autocomplete="off">
     <label>Adresse</label><input name="m_adresse" value="${esc(m.adresse)}">
     <div class="grid2 stack"><div><label>Telefon (WhatsApp)</label><input name="m_telefon" type="tel" value="${esc(m.telefon)}"></div><div><label>E-Mail</label><input name="m_email" type="email" value="${esc(m.email)}"></div></div>
@@ -506,6 +614,10 @@ function viewRental(id) {
   </div>
 
   ${archiveBox}
+  ${r.customerId && customerById(r.customerId)?.gesperrt ? `<div class="alert red">⛔ <span><b>Achtung: Kunde ist gesperrt</b>${customerById(r.customerId).sperrGrund ? ' – ' + esc(customerById(r.customerId).sperrGrund) : ''}</span></div>` : ''}
+  ${!ro && r.signature && !returned && m.telefon ? `<div class="card tight"><div class="row wrap-ok between"><b>💬 Nachricht an ${esc(m.name ? m.name.split(' ')[0] : 'Mieter')}</b>${r.remindedAt ? `<span class="tiny muted">zuletzt ${fmtShort(r.remindedAt)}</span>` : ''}</div><div class="btns">
+    ${!picked ? `<a class="btn wa sm" target="_blank" data-act="reminded" href="${reminderUrl(r, 'abholung')}">Abhol-Erinnerung</a>` : s.key === 'ueberfaellig' ? `<a class="btn danger sm" target="_blank" data-act="reminded" href="${reminderUrl(r, 'ueberfaellig')}">⏰ Überfällig-Nachricht</a>` : `<a class="btn wa sm" target="_blank" data-act="reminded" href="${reminderUrl(r, 'rueckgabe')}">Rückgabe-Erinnerung</a>`}
+  </div></div>` : ''}
   ${formCard}
 
   <details class="card" ${!docsOk && !ro ? 'open' : ''}><summary>🪪 Ausweis & Führerschein ${docsOk ? '<span class="badge green">vollständig</span>' : r.idDeleted ? '<span class="badge grey">gelöscht</span>' : `<span class="badge amber">${need.filter(k => r.docs?.[k]).length}/${need.length}</span>`}</summary>
@@ -569,6 +681,7 @@ function viewRental(id) {
     <div class="photos" id="ph-rueckgabe">${ro ? '' : uploadSlot('rueckgabe', 'Foto hinzufügen')}</div>
     <label>Notiz</label><textarea id="noteReturn" rows="2" placeholder="z. B. dreckig, Gurt fehlt" ${dis}>${esc(r.noteReturn)}</textarea>
     ${ro ? '' : `<div class="btns"><button class="btn sec sm" data-act="saveNote" data-k="noteReturn">Notiz speichern</button>${r.returnedAt ? '' : `<button class="btn grow" data-act="returned">✓ Zurück (jetzt)</button>`}</div>`}
+    ${(() => { const ds = damages.filter(d => d.rentalId === r.id); return `<hr><div class="row between"><h3 style="margin:0">Schäden</h3><a class="btn ghost sm" href="#/schaden/neu?r=${r.id}">⚠️ Schaden erfassen</a></div>${ds.length ? `<div class="list" style="margin-top:6px">${ds.map(damageLine).join('')}</div>` : '<p class="small muted">Keine Schäden erfasst.</p>'}`; })()}
     <hr><h3>Gebühren</h3>
     ${late.fee > 0 && !hasLateFee && !ro ? `<div class="alert amber">⏰ <span>${late.hours} Std. zu spät → Vorschlag <b>${eur(late.fee)}</b> <button class="btn sm" data-act="addLate" data-fee="${late.fee}" data-h="${late.hours}">Hinzufügen</button></span></div>` : ''}
     ${(r.gebuehren || []).map((f, i) => `<div class="fee-row"><div class="grow"><b>${FEE_TYPES[f.typ] || f.typ}</b> ${f.notiz ? `<span class="small muted">– ${esc(f.notiz)}</span>` : ''}</div><b>${eur(f.betrag)}</b>${ro ? '' : `<button class="btn ghost sm" data-act="delFee" data-i="${i}">✕</button>`}</div>`).join('') || '<p class="small muted">Keine Gebühren.</p>'}
@@ -629,35 +742,74 @@ function bindRentalForm(r, isNew) {
   const f = $('#rf'); if (!f || r.closed) return;
   f.addEventListener('input', () => dirty = true);
   let priceTouched = !isNew, kautionTouched = !isNew;
-  f.preis.addEventListener('input', () => priceTouched = true);
+  const chosen = new Set((r.extras || []).map(x => x.name));
+  f.preis.addEventListener('input', () => { priceTouched = true; showInfo(); });
   f.kaution.addEventListener('input', () => kautionTouched = true);
+  const itemNow = () => itemById(f.itemId.value) || r.item || {};
+  const selExtras = () => (itemNow().extras || []).filter(x => chosen.has(x.name));
+  const drawExtras = () => {
+    const ex = itemNow().extras || [];
+    $('#extrasBox').innerHTML = ex.length ? `<label>Zubehör dazu</label><div class="row wrap-ok" style="gap:6px">${ex.map((x, i) => `<label class="check" style="padding:6px 10px;border:1px solid var(--line);border-radius:10px;margin:0"><input type="checkbox" data-ex="${esc(x.name)}" ${chosen.has(x.name) ? 'checked' : ''}> ${esc(x.name)} <span class="muted small">${num(x.preis) ? eur(x.preis) + (x.proTag ? '/Tag' : '') : 'gratis'}</span></label>`).join('')}</div>` : '';
+  };
+  let calc = null;
+  const showInfo = () => { if (!calc) return; $('#priceInfo').textContent = calc.text + (priceTouched && num(f.preis.value) !== calc.total ? `  →  manuell: ${eur(f.preis.value)}` : ''); };
   const recalc = () => {
-    const it = itemById(f.itemId.value);
-    const d = rentalDays(f.von.value, f.bis.value);
-    $('#daysInfo').textContent = `(${d} Tag${d > 1 ? 'e' : ''})`;
-    if (it && !priceTouched) f.preis.value = (d * num(it.tagespreis)).toFixed(2).replace(/\.00$/, '');
-    if (it && !kautionTouched) f.kaution.value = num(it.kaution);
+    const it = itemNow();
+    calc = calcPrice(it, f.von.value, f.bis.value, selExtras(), num(f.rabatt.value));
+    $('#daysInfo').textContent = `(${calc.days} Tag${calc.days > 1 ? 'e' : ''})`;
+    if (!priceTouched) f.preis.value = calc.total.toFixed(2).replace('.', ',').replace(/,00$/, '');
+    if (!kautionTouched && it.kaution != null) f.kaution.value = num(it.kaution);
+    showInfo();
     const a = new Date(f.von.value), b = new Date(f.bis.value);
     const clash = rentals.filter(x => x.id !== r.id && !x.closed && x.itemId === f.itemId.value && new Date(x.von) < b && new Date(x.bis) > a);
     $('#overlap').innerHTML = (b <= a ? `<div class="alert red" style="margin-top:10px">Ende liegt vor dem Beginn.</div>` : '') + clash.map(x => `<div class="alert red" style="margin-top:10px">⚠️ <span>Überschneidung mit ${esc(x.mieter?.name || 'einer Miete')} (${fmtShort(x.von)} – ${fmtShort(x.bis)})</span></div>`).join('');
   };
-  ['itemId', 'von', 'bis'].forEach(n => f[n].addEventListener('change', () => { if (isNew || confirm('Preis neu berechnen?')) priceTouched = false; recalc(); }));
-  recalc();
-  if (!isNew) priceTouched = true;
+  const askRecalc = () => { if (isNew || !priceTouched || confirm('Preis neu berechnen?')) priceTouched = false; recalc(); };
+  f.itemId.addEventListener('change', () => { chosen.clear(); drawExtras(); askRecalc(); });
+  ['von', 'bis'].forEach(n => f[n].addEventListener('change', askRecalc));
+  f.rabatt.addEventListener('change', askRecalc);
+  $('#extrasBox').addEventListener('change', (e) => { const cb = e.target.closest('[data-ex]'); if (!cb) return; cb.checked ? chosen.add(cb.dataset.ex) : chosen.delete(cb.dataset.ex); askRecalc(); });
+  // Stammkunde
+  const showCust = (c) => {
+    if (!c) { $('#custInfo').innerHTML = ''; return; }
+    const st = custStats(c.id);
+    $('#custInfo').innerHTML = c.gesperrt ? `<div class="alert red" style="margin-top:8px">⛔ <span><b>${esc(c.name)} ist gesperrt</b>${c.sperrGrund ? ' – ' + esc(c.sperrGrund) : ''}</span></div>`
+      : `<div class="alert teal" style="margin-top:8px">${st.n >= 2 ? '⭐' : '👤'} <span><b>${esc(c.name)}</b> · ${st.n} Miete${st.n === 1 ? '' : 'n'} bisher${num(c.rabatt) ? ` · ${num(c.rabatt)} % Rabatt` : ''}${c.notiz ? '<br><span class="small">' + esc(c.notiz) + '</span>' : ''}</span></div>`;
+  };
+  showCust(customerById(f.customerId.value));
+  $('#custPick') && $('#custPick').addEventListener('change', (e) => {
+    const v = e.target.value.trim();
+    const c = customers.find(c => `${c.name}${c.telefon ? ' · ' + c.telefon : ''}` === v) || customers.find(c => c.name === v);
+    if (!c) return;
+    f.customerId.value = c.id;
+    f.m_name.value = c.name || ''; f.m_adresse.value = c.adresse || ''; f.m_telefon.value = c.telefon || ''; f.m_email.value = c.email || ''; f.m_geburtsdatum.value = c.geburtsdatum || ''; f.m_fuehrerschein.value = c.fuehrerschein || '';
+    if (num(c.rabatt) && !num(f.rabatt.value)) { f.rabatt.value = num(c.rabatt); askRecalc(); }
+    e.target.value = ''; showCust(c);
+  });
+  drawExtras(); recalc();
+  if (!isNew) { priceTouched = num(r.preis) !== calc.total; showInfo(); }
   f.onsubmit = async (e) => {
     e.preventDefault();
     const it = itemById(f.itemId.value);
     if (new Date(f.bis.value) <= new Date(f.von.value)) return toast('Ende muss nach dem Beginn liegen', 'err');
     if ($('#overlap .alert') && !confirm('Es gibt eine Überschneidung. Trotzdem speichern?')) return;
+    const cust = customerById(f.customerId.value);
+    if (cust?.gesperrt && !confirm(`${cust.name} ist gesperrt. Trotzdem vermieten?`)) return;
+    const extras = selExtras().map(x => ({ name: x.name, preis: num(x.preis), proTag: !!x.proTag }));
+    const preis = num(f.preis.value);
     const data = {
-      itemId: f.itemId.value, von: f.von.value, bis: f.bis.value, preis: num(f.preis.value), kaution: num(f.kaution.value),
+      itemId: f.itemId.value, von: f.von.value, bis: f.bis.value, preis, kaution: num(f.kaution.value),
       tagespreis: num(it?.tagespreis ?? r.tagespreis), zahlungsart: f.zahlungsart.value, notiz: f.notiz.value.trim(),
+      extras, rabatt: num(f.rabatt.value), customerId: f.customerId.value || null,
+      preisInfo: calc && (extras.length || num(f.rabatt.value) || calc.label !== `${calc.days} Tag${calc.days > 1 ? 'e' : ''} × ${eur(it?.tagespreis)}` || preis !== calc.total) ? calc.text + (preis !== calc.total ? ` · vereinbart: ${eur(preis)}` : '') : '',
       mieter: { name: f.m_name.value.trim(), adresse: f.m_adresse.value.trim(), telefon: f.m_telefon.value.trim(), email: f.m_email.value.trim(), geburtsdatum: f.m_geburtsdatum.value, fuehrerschein: f.m_fuehrerschein.value },
       fahrer2: f.f2_name.value.trim() ? { name: f.f2_name.value.trim(), geburtsdatum: f.f2_geburtsdatum.value, fuehrerschein: f.f2_fuehrerschein.value } : null,
     };
-    if (isNew || !r.signature) Object.assign(data, { item: it ? itemSnap(it) : r.item, cfg: cfgSnap(), vermieter: vermieterSnap(), terms: settings.terms || DEFAULT_TERMS, ownerSignature: settings.ownerSignature || null });
+    if (isNew || !r.signature) Object.assign(data, { item: it ? itemSnap(it) : r.item, cfg: { ...cfgSnap(), selbstbeteiligung: num(it?.selbstbeteiligung) || num(settings.selbstbeteiligung ?? 1000) }, vermieter: vermieterSnap(), terms: settings.terms || DEFAULT_TERMS, ownerSignature: settings.ownerSignature || null });
     else if ((data.preis !== num(r.preis) || data.von !== r.von || data.bis !== r.bis || data.kaution !== num(r.kaution) || (data.fahrer2?.name || '') !== (r.fahrer2?.name || '')) && !confirm('Der Vertrag ist schon unterschrieben. Trotzdem ändern?')) return;
     try {
+      const cid = await upsertCustomer({ ...r, ...data });
+      if (cid) data.customerId = cid;
       if (isNew) {
         const id = store.newId();
         await store.set('rentals', id, { ...data, createdAt: nowIso(), updatedAt: nowIso(), kautionStatus: 'offen', gebuehren: [], closed: false });
@@ -723,6 +875,7 @@ function bindRentalActions(r) {
     switch (a.dataset.act) {
       case 'linkSent': upd(r, { linkSentAt: r.linkSentAt || nowIso() }); break;
       case 'waContract': upd(r, { contractSentAt: nowIso() }); break;
+      case 'reminded': upd(r, { remindedAt: nowIso() }); break;
       case 'waFinal': upd(r, { finalSentAt: nowIso() }); break;
       case 'copyLink': try { await navigator.clipboard.writeText(linkFor(r)); toast('Link kopiert', 'ok'); } catch { prompt('Link kopieren:', linkFor(r)); } upd(r, { linkSentAt: r.linkSentAt || nowIso() }); break;
       case 'share': {
@@ -762,6 +915,7 @@ function bindRentalActions(r) {
         if ($('[data-check="return"]')) patch.checkReturn = readChecks('return');
         if (st.kautionIn) { patch.kautionStatus = st.auszahlung > 0 ? 'zurueck' : 'einbehalten'; patch.kautionBackVia = r.kautionBackVia || 'bar'; }
         if (!r.mietePaid) patch.mietePaid = st.kautionIn ? 'kaution' : (r.zahlungsart || 'bar');
+        const cid = await upsertCustomer(r); if (cid && cid !== r.customerId) patch.customerId = cid;
         await upd(r, patch, 'Abgeschlossen – liegt jetzt im Archiv ✓');
         window.scrollTo(0, 0); break;
       }
@@ -822,4 +976,160 @@ async function autoCleanup() {
       await store.update('rentals', r.id, patch);
     } catch (e) { console.error(e); }
   }
+}
+
+// ---------- Erinnerungen an Mieter (WhatsApp) ----------
+function reminderText(r, kind) {
+  const vn = r.mieter?.name ? ' ' + r.mieter.name.split(' ')[0] : '';
+  const it = r.item?.name || 'Mietgegenstand';
+  const late = num(r.cfg?.verspaetungStunde);
+  if (kind === 'abholung') return `Hallo${vn}, kurze Erinnerung: Die Abholung von ${it} ist am ${fmtDT(r.von)}. Alles Weitere findest du hier:\n${linkFor(r)}`;
+  if (kind === 'rueckgabe') return `Hallo${vn}, kurze Erinnerung: Bitte bring ${it} bis ${fmtDT(r.bis)} zurück (besenrein). Vergiss die Rückgabe-Fotos nicht:\n${linkFor(r)}\nDanke!`;
+  return `Hallo${vn}, die Mietzeit für ${it} ist seit ${fmtDT(r.bis)} abgelaufen. Bitte bring ihn so schnell wie möglich zurück oder melde dich kurz bei mir.${late ? ` Laut Vertrag werden ab jetzt ${eur(late)} je angefangene Stunde berechnet.` : ''}`;
+}
+const reminderUrl = (r, kind) => waLink(r.mieter?.telefon, reminderText(r, kind));
+
+// ---------- Kundenkartei ----------
+const custStats = (cid) => {
+  const rs = rentals.filter(r => r.customerId === cid && !r.storniert);
+  return { n: rs.length, umsatz: rs.reduce((s, r) => s + rentalIncome(r), 0), last: rs.map(r => r.von).sort().pop(), rs };
+};
+const customerById = (id) => customers.find(c => c.id === id);
+function findCustomer(m) {
+  const p = normPhone(m.telefon);
+  return (p && customers.find(c => normPhone(c.telefon) === p)) || (m.name && m.geburtsdatum && customers.find(c => c.name?.toLowerCase() === m.name.toLowerCase() && c.geburtsdatum === m.geburtsdatum)) || null;
+}
+// Mieterdaten in die Kundenkartei übernehmen (Notiz, Sperre, Rabatt bleiben erhalten)
+async function upsertCustomer(r) {
+  const m = r.mieter || {};
+  if (!m.name) return r.customerId || null;
+  const c = (r.customerId && customerById(r.customerId)) || findCustomer(m);
+  const data = { name: m.name, adresse: m.adresse || '', telefon: m.telefon || '', email: m.email || '', geburtsdatum: m.geburtsdatum || '', fuehrerschein: m.fuehrerschein || '', updatedAt: nowIso() };
+  try {
+    if (c) { await store.update('customers', c.id, data); return c.id; }
+    const id = store.newId();
+    await store.set('customers', id, { ...data, rabatt: 0, notiz: '', gesperrt: false, createdAt: nowIso() });
+    return id;
+  } catch (e) { console.error(e); return r.customerId || null; }
+}
+
+function viewCustomers() {
+  const rows = customers.map(c => ({ c, st: custStats(c.id) })).sort((a, b) => (b.st.last || '').localeCompare(a.st.last || ''));
+  app.innerHTML = `${header('Kunden', `${customers.length} in der Kartei`, '#/mehr')}
+    <input id="q" placeholder="Suchen (Name, Telefon, Ort) …" style="margin-bottom:12px">
+    <div class="card list" id="cl">${rows.length ? rows.map(({ c, st }) => `<a class="list-item" href="#/kunde/${c.id}" data-s="${esc(((c.name || '') + ' ' + (c.telefon || '') + ' ' + (c.adresse || '')).toLowerCase())}"><div class="ic">${c.gesperrt ? '⛔' : st.n >= 2 ? '⭐' : '👤'}</div><div class="grow"><div class="t">${esc(c.name)}</div><div class="small muted">${st.n} Miete${st.n === 1 ? '' : 'n'} · ${eur(st.umsatz)}${st.last ? ' · zuletzt ' + new Date(st.last).toLocaleDateString('de-DE') : ''}</div></div>${c.gesperrt ? '<span class="badge red">gesperrt</span>' : num(c.rabatt) ? `<span class="badge teal">−${num(c.rabatt)} %</span>` : st.n >= 2 ? '<span class="badge green">Stammkunde</span>' : ''}</a>`).join('') : `<div class="empty">Noch keine Kunden. Sie werden automatisch angelegt, sobald du eine Miete mit Mieter-Namen speicherst.</div>`}</div>
+    <a class="btn ghost block" href="#/kunde/neu">+ Kunde manuell anlegen</a>`;
+  $('#q').oninput = (e) => { const q = e.target.value.toLowerCase(); $$('#cl .list-item').forEach(a => a.style.display = a.dataset.s.includes(q) ? '' : 'none'); };
+}
+
+function viewCustomer(id) {
+  const isNew = id === 'neu';
+  const c = isNew ? { rabatt: 0 } : customerById(id);
+  if (!c) { app.innerHTML = header('Nicht gefunden', '', '#/kunden'); return; }
+  const st = isNew ? { n: 0, umsatz: 0, rs: [] } : custStats(id);
+  const dmgs = isNew ? [] : damages.filter(d => st.rs.some(r => r.id === d.rentalId));
+  app.innerHTML = `${header(isNew ? 'Neuer Kunde' : esc(c.name), isNew ? '' : `${st.n} Mieten · ${eur(st.umsatz)}`, '#/kunden')}
+  ${c.gesperrt ? `<div class="alert red">⛔ <span><b>Gesperrt</b>${c.sperrGrund ? ': ' + esc(c.sperrGrund) : ''} – an diesen Kunden nicht mehr vermieten.</span></div>` : ''}
+  ${isNew ? '' : `<div class="btns" style="margin-top:0;margin-bottom:12px">${c.gesperrt ? '' : `<a class="btn" href="#/miete/neu?k=${id}">+ Neue Miete</a>`}${c.telefon ? `<a class="btn wa" target="_blank" href="${waLink(c.telefon, `Hallo ${c.name.split(' ')[0]}, `)}">WhatsApp</a><a class="btn ghost" href="tel:${esc(c.telefon)}">Anrufen</a>` : ''}</div>`}
+  <form class="card" id="cf">
+    <label>Name</label><input name="name" required value="${esc(c.name)}">
+    <label>Adresse</label><input name="adresse" value="${esc(c.adresse)}">
+    <div class="grid2 stack"><div><label>Telefon</label><input name="telefon" type="tel" value="${esc(c.telefon)}"></div><div><label>E-Mail</label><input name="email" type="email" value="${esc(c.email)}"></div></div>
+    <div class="grid2"><div><label>Geburtsdatum</label><input name="geburtsdatum" type="date" value="${esc(c.geburtsdatum)}"></div><div><label>Führerscheinklasse</label><select name="fuehrerschein"><option value="">–</option>${LICENSE_CLASSES.map(k => `<option ${c.fuehrerschein === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div></div>
+    <label>Stammkunden-Rabatt (%)</label><input name="rabatt" inputmode="decimal" value="${esc(c.rabatt || '')}" placeholder="0">
+    <label>Notiz (nur für dich)</label><textarea name="notiz" rows="3" placeholder="z. B. sehr zuverlässig, bringt immer sauber zurück">${esc(c.notiz)}</textarea>
+    <label class="check"><input type="checkbox" name="gesperrt" ${c.gesperrt ? 'checked' : ''}> ⛔ Nicht mehr vermieten (gesperrt)</label>
+    <input name="sperrGrund" value="${esc(c.sperrGrund)}" placeholder="Grund, z. B. Schaden nicht bezahlt">
+    <div class="btns"><button class="btn grow">Speichern</button>${isNew ? '' : '<button type="button" class="btn danger" id="delC">Löschen</button>'}</div>
+  </form>
+  ${st.rs.length ? `<h2>Mieten</h2><div class="card list">${[...st.rs].reverse().map(r => { const s = rentalStatus(r); return `<a class="list-item" href="#/miete/${r.id}"><div class="ic">${itemIcon(r.item?.typ)}</div><div class="grow"><div class="t">${esc(r.item?.name || '')}</div><div class="small muted">${fmtShort(r.von)} – ${fmtShort(r.bis)} · ${eur(rentalIncome(r))}${(r.gebuehren || []).length ? ' · Gebühren ' + eur(feesTotal(r)) : ''}</div></div><span class="badge ${s.cls}">${s.label}</span></a>`; }).join('')}</div>` : ''}
+  ${dmgs.length ? `<h2>Schäden</h2><div class="card list">${dmgs.map(damageLine).join('')}</div>` : ''}
+  ${isNew ? '' : `<p class="tiny muted">Die Kundenkartei enthält nur Kontaktdaten. Ausweisfotos bleiben bei der jeweiligen Miete und werden dort automatisch gelöscht.</p>`}`;
+  const f = $('#cf');
+  f.addEventListener('input', () => dirty = true);
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const d = { name: f.name.value.trim(), adresse: f.adresse.value.trim(), telefon: f.telefon.value.trim(), email: f.email.value.trim(), geburtsdatum: f.geburtsdatum.value, fuehrerschein: f.fuehrerschein.value, rabatt: num(f.rabatt.value), notiz: f.notiz.value.trim(), gesperrt: f.gesperrt.checked, sperrGrund: f.sperrGrund.value.trim(), updatedAt: nowIso() };
+    const nid = isNew ? store.newId() : id;
+    await store.set('customers', nid, { ...(isNew ? { createdAt: nowIso() } : { createdAt: c.createdAt || nowIso() }), ...d });
+    dirty = false; toast('Gespeichert', 'ok'); if (isNew) location.hash = '#/kunde/' + nid; else render(true);
+  };
+  $('#delC') && ($('#delC').onclick = async () => { if (!confirm('Kunde aus der Kartei löschen? Die Mieten selbst bleiben erhalten.')) return; await store.del('customers', id); location.hash = '#/kunden'; });
+}
+
+// ---------- Schadensakte ----------
+const damageLine = (d) => `<a class="list-item" href="#/schaden/${d.id}"><div class="ic">${d.photos?.length ? `<img src="${d.photos[0]}" alt="" style="width:42px;height:42px;object-fit:cover;border-radius:12px">` : '⚠️'}</div><div class="grow"><div class="t">${esc(d.beschreibung || 'Schaden')}</div><div class="small muted">${fmtDate(d.datum)} · ${esc(d.itemName || itemById(d.itemId)?.name || '')}${d.mieterName ? ' · ' + esc(d.mieterName) : ''} · ${eur(d.kosten)} · ${DAMAGE_PAYER[d.zahlt || 'offen']}</div></div><span class="badge ${d.status === 'erledigt' ? 'green' : d.status === 'reparatur' ? 'blue' : 'amber'}">${DAMAGE_STATUS[d.status || 'offen']}</span></a>`;
+
+function viewDamages() {
+  const open = damages.filter(d => d.status !== 'erledigt'), done = damages.filter(d => d.status === 'erledigt');
+  const sumOpen = open.reduce((s, d) => s + num(d.kosten), 0);
+  app.innerHTML = `${header('Schadensakte', open.length ? `${open.length} offen · ${eur(sumOpen)}` : 'Alles erledigt', '#/mehr')}
+    <a class="btn block" href="#/schaden/neu" style="margin-bottom:12px">+ Schaden erfassen</a>
+    ${open.length ? `<h2>Offen</h2><div class="card list">${open.map(damageLine).join('')}</div>` : ''}
+    ${done.length ? `<h2>Erledigt</h2><div class="card list">${done.map(damageLine).join('')}</div>` : ''}
+    ${!damages.length ? `<div class="card empty">Keine Schäden – so soll es sein. 👍</div>` : ''}`;
+}
+
+function viewDamage(id) {
+  const isNew = !id || id.startsWith('neu');
+  const q = new URLSearchParams(location.hash.split('?')[1] || '');
+  let d;
+  if (isNew) {
+    const r = q.get('r') ? rentals.find(x => x.id === q.get('r')) : null;
+    d = { datum: dayKey(new Date()), itemId: r?.itemId || q.get('i') || items[0]?.id || '', rentalId: r?.id || '', mieterName: r?.mieter?.name || '', status: 'offen', zahlt: r ? 'mieter' : 'offen', photos: [], kosten: '' };
+  } else d = damages.find(x => x.id === id);
+  if (!d) { app.innerHTML = header('Nicht gefunden', '', '#/schaeden'); return; }
+  const r = d.rentalId ? rentals.find(x => x.id === d.rentalId) : null;
+  const feeAdded = r && (r.gebuehren || []).some(f => f.damageId === id);
+  let photos = [...(d.photos || [])];
+  const itemRentals = rentals.filter(x => x.itemId === d.itemId && !x.storniert).slice(-15).reverse();
+  app.innerHTML = `${header(isNew ? 'Schaden erfassen' : 'Schaden', r ? esc(r.mieter?.name || '') : '', r ? '#/miete/' + r.id : '#/schaeden')}
+  <form class="card" id="df">
+    <label>Artikel</label><select name="itemId">${items.map(i => `<option value="${i.id}" ${d.itemId === i.id ? 'selected' : ''}>${esc(i.name)}</option>`).join('')}</select>
+    <label>Gehört zu Miete (optional)</label><select name="rentalId"><option value="">– keine / unbekannt –</option>${itemRentals.map(x => `<option value="${x.id}" ${d.rentalId === x.id ? 'selected' : ''}>${esc(x.mieter?.name || '?')} · ${fmtShort(x.von)}</option>`).join('')}</select>
+    <label>Was ist kaputt?</label><textarea name="beschreibung" rows="3" required placeholder="z. B. Rücklicht links gebrochen, Plane eingerissen">${esc(d.beschreibung)}</textarea>
+    <div class="grid2"><div><label>Datum</label><input name="datum" type="date" value="${esc(d.datum)}"></div><div><label>Kosten (€, geschätzt)</label><input name="kosten" inputmode="decimal" value="${esc(d.kosten)}"></div></div>
+    <div class="grid2"><div><label>Wer zahlt?</label><select name="zahlt">${Object.entries(DAMAGE_PAYER).map(([k, v]) => `<option value="${k}" ${(d.zahlt || 'offen') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+    <div><label>Status</label><select name="status">${Object.entries(DAMAGE_STATUS).map(([k, v]) => `<option value="${k}" ${(d.status || 'offen') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
+    <label>Versicherung / Aktenzeichen (optional)</label><input name="versicherung" value="${esc(d.versicherung)}" placeholder="z. B. Schadennummer">
+    <label>Fotos (max. 4)</label>
+    <div class="photos" id="dPh">${photos.map((p, i) => `<div class="photo"><img src="${p}" data-full alt=""><button type="button" class="x" data-delp="${i}">✕</button></div>`).join('')}<label class="upload"><span class="big">📷</span>Foto<span class="tiny">Kamera oder Galerie</span><input type="file" accept="image/*" multiple id="dIn"></label></div>
+    <label>Notiz</label><textarea name="notiz" rows="2">${esc(d.notiz)}</textarea>
+    <div class="btns"><button class="btn grow">Speichern</button>${isNew ? '' : '<button type="button" class="btn danger" id="delD">Löschen</button>'}</div>
+  </form>
+  ${isNew ? '' : `<div class="card"><h3>Weiter mit …</h3>
+    ${r && !r.closed && d.zahlt === 'mieter' ? (feeAdded ? '<p class="small">✓ Als Gebühr bei der Miete eingetragen – wird mit der Kaution verrechnet.</p>' : `<button class="btn sec block" id="toFee">Dem Mieter als Gebühr berechnen (${eur(d.kosten)})</button>`) : ''}
+    ${r && r.closed && d.zahlt === 'mieter' ? '<p class="small muted">Die Miete ist schon abgeschlossen – Betrag bitte direkt mit dem Mieter klären.</p>' : ''}
+    ${d.expenseId ? `<p class="small">✓ Als Ausgabe erfasst. <a href="#/ausgabe/${d.expenseId}">Ansehen</a></p>` : `<a class="btn ghost block" style="margin-top:8px" href="#/ausgabe/neu?k=reparatur&i=${d.itemId}&b=${num(d.kosten)}&n=${encodeURIComponent('Schaden: ' + (d.beschreibung || '').slice(0, 60))}&d=${id}">Reparaturkosten als Ausgabe erfassen</a>`}
+    ${r?.mieter?.telefon ? `<a class="btn wa block" style="margin-top:8px" target="_blank" href="${waLink(r.mieter.telefon, `Hallo ${r.mieter.name?.split(' ')[0] || ''}, bei der Rückgabe von ${r.item?.name} ist mir folgender Schaden aufgefallen: ${d.beschreibung}. Geschätzte Kosten: ${eur(d.kosten)}. Lass uns kurz sprechen.`)}">Mieter per WhatsApp informieren</a>` : ''}
+  </div>`}`;
+  const f = $('#df');
+  f.addEventListener('input', () => dirty = true);
+  const redraw = () => { $$('#dPh .photo').forEach(e => e.remove()); $('#dPh').insertAdjacentHTML('afterbegin', photos.map((p, i) => `<div class="photo"><img src="${p}" data-full alt=""><button type="button" class="x" data-delp="${i}">✕</button></div>`).join('')); };
+  $('#dIn').onchange = async (e) => {
+    for (const file of [...e.target.files]) {
+      if (photos.length >= 4) { toast('Maximal 4 Fotos', 'err'); break; }
+      photos.push(await compressImage(file, { max: 900, quality: 0.55 }));
+    }
+    e.target.value = ''; redraw(); dirty = true;
+  };
+  app.onclick = async (e) => {
+    const img = e.target.closest('img[data-full]'); if (img) return openViewer(img.src, 'Schadensfoto');
+    const dp = e.target.closest('[data-delp]'); if (dp) { photos.splice(+dp.dataset.delp, 1); redraw(); dirty = true; return; }
+    if (e.target.id === 'toFee') {
+      await store.update('rentals', r.id, { gebuehren: [...(r.gebuehren || []), { typ: 'schaden', betrag: num(d.kosten), notiz: (d.beschreibung || '').slice(0, 80), damageId: id }], updatedAt: nowIso() });
+      toast('Als Gebühr eingetragen', 'ok');
+    }
+  };
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const rid = f.rentalId.value, rr = rentals.find(x => x.id === rid);
+    const data = { itemId: f.itemId.value, itemName: itemById(f.itemId.value)?.name || d.itemName || '', rentalId: rid, mieterName: rr?.mieter?.name || '', beschreibung: f.beschreibung.value.trim(), datum: f.datum.value, kosten: num(f.kosten.value), zahlt: f.zahlt.value, status: f.status.value, versicherung: f.versicherung.value.trim(), notiz: f.notiz.value.trim(), photos, expenseId: d.expenseId || null, updatedAt: nowIso() };
+    if (JSON.stringify(data).length > 950000) return toast('Fotos zu groß – bitte eins entfernen', 'err');
+    const nid = isNew ? store.newId() : id;
+    try { await store.set('damages', nid, { createdAt: d.createdAt || nowIso(), ...data }); } catch (err) { return toast('Fehler: ' + err.message, 'err'); }
+    dirty = false; toast('Gespeichert', 'ok');
+    if (isNew) location.hash = '#/schaden/' + nid; else render(true);
+  };
+  $('#delD') && ($('#delD').onclick = async () => { if (!confirm('Schaden löschen?')) return; await store.del('damages', id); location.hash = '#/schaeden'; });
 }

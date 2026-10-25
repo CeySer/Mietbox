@@ -79,7 +79,7 @@ Die Miete ist spätestens bei der Übergabe fällig. Die Kaution sichert alle An
 Der Mietgegenstand ist besenrein zurückzugeben. Bei starker Verschmutzung wird eine Reinigungspauschale von {REINIGUNG} berechnet.
 
 ## 6. Schäden, Unfall, Diebstahl
-Schäden, Unfälle und Diebstahl sind dem Vermieter sofort zu melden; bei Unfall oder Diebstahl ist zusätzlich die Polizei zu verständigen. Der Mieter haftet für Schäden und Verlust während der Mietzeit, soweit er sie zu vertreten hat. {BUSSGELD}
+Schäden, Unfälle und Diebstahl sind dem Vermieter sofort zu melden; bei Unfall oder Diebstahl ist zusätzlich die Polizei zu verständigen. Der Mieter haftet für Schäden und Verlust während der Mietzeit, soweit er sie zu vertreten hat.{SB} {BUSSGELD}
 
 {GPS}## 8. Datenschutz und Aufbewahrung
 Die Daten des Mieters werden zur Abwicklung dieses Vertrags gespeichert. Fotos von Ausweis und Führerschein werden nur mit ausdrücklicher Einwilligung erstellt, als Kopie gekennzeichnet und {LOESCHTAGE} Tage nach Abschluss der Miete automatisch gelöscht; nicht benötigte Angaben dürfen vor dem Foto abgedeckt werden. Zustandsfotos werden nach {FOTOTAGE} Tagen gelöscht. Vertrag und Abrechnung werden im Rahmen der gesetzlichen Aufbewahrungspflichten aufbewahrt.
@@ -134,7 +134,7 @@ Der Mietgegenstand ist zum Schutz vor Diebstahl mit einer GPS-Ortung ausgestatte
 
 export const DEFAULT_SETTINGS = {
   name: '', adresse: '', telefon: '', email: '', paypalMe: '',
-  reinigung: 30, verspaetungStunde: 5, kulanzMinuten: 30, loeschTage: 90, fotoTage: 365,
+  reinigung: 30, selbstbeteiligung: 1000, verspaetungStunde: 5, kulanzMinuten: 30, loeschTage: 90, fotoTage: 365,
   terms: '', ownerSignature: null,
 };
 
@@ -175,6 +175,7 @@ export function contractSections(r) {
     .replaceAll('{NUTZUNG}', tt.nutzung)
     .replaceAll('{PRUEFUNG}', tt.pruefung)
     .replaceAll('{BUSSGELD}', tt.bussgeld ? BUSSGELD_TERM : '')
+    .replaceAll('{SB}', num(c.selbstbeteiligung) ? ` Ist ein Schaden über eine Versicherung des Vermieters gedeckt, trägt der Mieter je Schadensfall die Selbstbeteiligung von ${eur(c.selbstbeteiligung)}. Nicht versicherte Schäden sowie vorsätzlich oder grob fahrlässig verursachte Schäden trägt der Mieter in voller Höhe.` : '')
     .replaceAll('{KULANZ}', String(num(c.kulanzMinuten)))
     .replaceAll('{VERSPAETUNG}', eur(c.verspaetungStunde))
     .replaceAll('{REINIGUNG}', eur(c.reinigung))
@@ -197,9 +198,10 @@ export function contractHead(r) {
     vermieter: [v.name, v.adresse, v.telefon, v.email].filter(Boolean),
     mieter: [m.name, m.adresse, m.geburtsdatum ? 'geb. ' + new Date(m.geburtsdatum).toLocaleDateString('de-DE') : '', m.telefon, m.email, m.fuehrerschein ? 'Führerscheinklasse: ' + m.fuehrerschein : '',
       r.fahrer2?.name ? `Weiterer Fahrer: ${r.fahrer2.name}${r.fahrer2.geburtsdatum ? ', geb. ' + new Date(r.fahrer2.geburtsdatum).toLocaleDateString('de-DE') : ''}${r.fahrer2.fuehrerschein ? ', Kl. ' + r.fahrer2.fuehrerschein : ''}` : ''].filter(Boolean),
-    gegenstand: [it.name, it.kennzeichen ? 'Kennzeichen: ' + it.kennzeichen : '', it.zgg ? 'zul. Gesamtgewicht: ' + it.zgg + ' kg' : ''].filter(Boolean),
+    gegenstand: [it.name, it.kennzeichen ? 'Kennzeichen: ' + it.kennzeichen : '', it.zgg ? 'zul. Gesamtgewicht: ' + it.zgg + ' kg' : '', (r.extras || []).length ? 'Zubehör: ' + r.extras.map(x => x.name).join(', ') : ''].filter(Boolean),
     zeitraum: `${fmtDT(r.von)}  bis  ${fmtDT(r.bis)}`,
-    preise: `Miete: ${eur(r.preis)}   ·   Kaution: ${eur(r.kaution)}`,
+    preise: `Miete: ${eur(r.preis)}   ·   Kaution: ${eur(r.kaution)}${num(r.cfg?.selbstbeteiligung) ? `   ·   Selbstbeteiligung je Schadensfall: ${eur(r.cfg.selbstbeteiligung)}` : ''}`,
+    berechnung: r.preisInfo || '',
   };
 }
 
@@ -214,7 +216,7 @@ export function contractHtml(r) {
     </div>
     <p><b>Mietgegenstand:</b> ${h.gegenstand.map(esc).join(' · ')}</p>
     <p><b>Mietzeit:</b> ${esc(h.zeitraum)}</p>
-    <p><b>${esc(h.preise)}</b></p>
+    <p><b>${esc(h.preise)}</b>${h.berechnung ? `<br><span class="small">${esc(h.berechnung)}</span>` : ''}</p>
     ${contractSections(r).map(s => `<h4>${esc(s.h)}</h4><p>${esc(s.t).replace(/\n/g, '<br>')}</p>`).join('')}
   </div>`;
 }
@@ -266,7 +268,8 @@ export async function makeContractPdf(r, photos = []) {
   doc.setDrawColor(200); doc.line(M, y, W - M, y); y += 5;
   text('Mietgegenstand: ' + (h.gegenstand.join(' · ') || '–'), 10, 'bold');
   text('Mietzeit: ' + h.zeitraum, 10, 'normal');
-  text(h.preise + (r.zahlungsart ? '   ·   Zahlung: ' + (r.zahlungsart === 'paypal' ? 'PayPal' : 'Bar') : ''), 10, 'normal', 4);
+  text(h.preise + (r.zahlungsart ? '   ·   Zahlung: ' + (r.zahlungsart === 'paypal' ? 'PayPal' : 'Bar') : ''), 10, 'normal', h.berechnung ? 1 : 4);
+  if (h.berechnung) text(h.berechnung, 8.5, 'italic', 4);
 
   for (const s of contractSections(r)) { need(14); text(s.h, 10.5, 'bold', 0.8); text(s.t, 9, 'normal', 2.5); }
 
@@ -509,3 +512,55 @@ export async function initStore() {
   if (isDemo) return demoStore();
   return fbStore();
 }
+
+
+// ---------- WhatsApp-Link ----------
+export function waLink(phone, text) {
+  let p = String(phone || '').replace(/[^\d+]/g, '');
+  if (p.startsWith('+')) p = p.slice(1); else if (p.startsWith('00')) p = p.slice(2); else if (p.startsWith('0')) p = '49' + p.slice(1);
+  return `https://wa.me/${p}?text=${encodeURIComponent(text)}`;
+}
+export const normPhone = (p) => { let x = String(p || '').replace(/[^\d+]/g, ''); if (x.startsWith('+')) x = x.slice(1); else if (x.startsWith('00')) x = x.slice(2); else if (x.startsWith('0')) x = '49' + x.slice(1); return x; };
+
+// ---------- Preisberechnung (Staffel, Zubehör, Rabatt) ----------
+// item: { tagespreis, preisHalbtag, preisWochenende, preisWoche }
+// extras: [{ name, preis, proTag }]  rabatt: Prozent
+export function calcPrice(item, von, bis, extras = [], rabatt = 0) {
+  const a = new Date(von), b = new Date(bis);
+  const hours = Math.max(0, (b - a) / 3600e3);
+  const days = rentalDays(von, bis);
+  const tp = num(item?.tagespreis);
+  let grund = days * tp, label = `${days} Tag${days > 1 ? 'e' : ''} × ${eur(tp)}`;
+  const halb = num(item?.preisHalbtag), we = num(item?.preisWochenende), wo = num(item?.preisWoche);
+  if (halb && hours <= 5) { grund = halb; label = 'Halber Tag (bis 5 Std.)'; }
+  else {
+    // Wochenende: höchstens 3 Tage, umfasst Samstag und Sonntag
+    let coversWE = false;
+    if (we && days <= 3) {
+      const d = new Date(a); d.setHours(0, 0, 0, 0);
+      let sat = false, sun = false;
+      for (let t = new Date(d); t < b; t.setDate(t.getDate() + 1)) { if (t.getDay() === 6) sat = true; if (t.getDay() === 0) sun = true; }
+      coversWE = sat && sun;
+    }
+    if (coversWE && we < grund) { grund = we; label = 'Wochenend-Preis'; }
+    if (wo && days >= 5) {
+      const weeks = Math.floor(days / 7), rest = days % 7;
+      const wp = weeks * wo + Math.min(rest * tp, wo);
+      if (wp < grund) { grund = wp; label = weeks ? `${weeks} Woche${weeks > 1 ? 'n' : ''}${rest ? ` + ${rest} Tag${rest > 1 ? 'e' : ''}` : ''}` : 'Wochenpreis'; }
+    }
+  }
+  const extrasLines = (extras || []).map(x => ({ name: x.name, betrag: x.proTag ? num(x.preis) * days : num(x.preis), proTag: !!x.proTag, preis: num(x.preis) }));
+  const extrasSum = extrasLines.reduce((s, x) => s + x.betrag, 0);
+  const brutto = grund + extrasSum;
+  const rabattBetrag = Math.round(brutto * num(rabatt)) / 100;
+  const total = Math.round((brutto - rabattBetrag) * 100) / 100;
+  const parts = [`${label} = ${eur(grund)}`, ...extrasLines.map(x => `${x.name}${x.proTag ? ` (${days} × ${eur(x.preis)})` : ''} ${eur(x.betrag)}`)];
+  let text = parts.join(' + ');
+  if (rabattBetrag) text += ` − ${num(rabatt)} % Rabatt (${eur(rabattBetrag)})`;
+  if (extrasLines.length || rabattBetrag) text += ` = ${eur(total)}`;
+  return { grund, label, extrasLines, extrasSum, rabattBetrag, total, text, days };
+}
+
+export const EXPENSE_CATS = { anschaffung: 'Anschaffung', versicherung: 'Versicherung', steuer: 'Kfz-Steuer', tuev: 'TÜV / HU', reparatur: 'Reparatur / Wartung', zubehoer: 'Zubehör / Material', werbung: 'Werbung (z. B. Kleinanzeigen)', sonstiges: 'Sonstiges' };
+export const DAMAGE_STATUS = { offen: 'Offen', reparatur: 'In Reparatur', erledigt: 'Erledigt' };
+export const DAMAGE_PAYER = { offen: 'Noch unklar', mieter: 'Mieter zahlt', versicherung: 'Versicherung', selbst: 'Ich selbst' };
